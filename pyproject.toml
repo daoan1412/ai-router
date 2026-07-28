@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "mcp-ai-router"
-version = "0.1.8"
+version = "0.1.9"
 description = "Stdio MCP server for Cursor, Claude Code, and other clients — route prompts to Gemini, ChatGPT, Claude, DeepSeek & Kimi via browser sessions. pipx install mcp-ai-router"
 authors = ["Olivier Taylor <olivier.taylor.work@gmail.com>"]
 license = "MIT"

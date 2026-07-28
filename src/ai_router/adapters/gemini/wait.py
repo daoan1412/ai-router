@@ -74,29 +74,17 @@ _QUILL_TYPE_JS = (
     const writeViaDom = (value) => {
         el.classList.remove('ql-blank');
         el.innerHTML = '';
-        for (const line of value.split(/\\r?\\n/)) {
-            const p = document.createElement('p');
-            if (line) {
-                p.textContent = line;
-            } else {
-                p.appendChild(document.createElement('br'));
-            }
-            el.appendChild(p);
-        }
-    };
-
-    const insertMultiline = (value) => {
         const lines = value.split(/\\r?\\n/);
+        const p = document.createElement('p');
         for (let i = 0; i < lines.length; i++) {
             if (i > 0) {
-                if (!document.execCommand('insertLineBreak', false, null)) {
-                    document.execCommand('insertParagraph', false, null);
-                }
+                p.appendChild(document.createElement('br'));
             }
             if (lines[i]) {
-                document.execCommand('insertText', false, lines[i]);
+                p.appendChild(document.createTextNode(lines[i]));
             }
         }
+        el.appendChild(p);
     };
 
     el.focus();
@@ -112,7 +100,7 @@ _QUILL_TYPE_JS = (
     document.execCommand('delete', false, null);
 
     if (text.includes('\\n')) {
-        insertMultiline(text);
+        writeViaDom(text);
     } else {
         const ok = document.execCommand('insertText', false, text);
         if (!ok) {
@@ -123,8 +111,7 @@ _QUILL_TYPE_JS = (
     let written = (el.innerText || el.textContent || '');
     const expected = text.trim();
     const writtenTrim = written.trim();
-    // Quill single-line mode may drop everything after the first newline.
-    if (expected.includes('\\n') && writtenTrim.length < expected.length * 0.85) {
+    if (writtenTrim.length < expected.length * 0.85) {
         writeViaDom(text);
         written = (el.innerText || el.textContent || '');
     }
@@ -238,23 +225,41 @@ def _prompt_fully_written(prompt: str, written: str) -> bool:
     return hits >= max(1, len(expected_lines) - 1)
 
 
+def normalize_gemini_prompt(prompt: str) -> str:
+    """Trim trailing spaces and collapse runs of blank lines before Quill insert."""
+    text = prompt.replace("\r\n", "\n").replace("\r", "\n")
+    lines = [line.rstrip() for line in text.split("\n")]
+    out: list[str] = []
+    blank_run = 0
+    for line in lines:
+        if not line.strip():
+            blank_run += 1
+            if blank_run <= 1:
+                out.append("")
+        else:
+            blank_run = 0
+            out.append(line)
+    return "\n".join(out).strip("\n")
+
+
 async def type_prompt(page: Page, prompt: str) -> None:
     """Insert text into Gemini's Quill editor and fire the input events Send needs."""
+    compact = normalize_gemini_prompt(prompt)
     await _wait_prompt_input(page)
-    result = await page.evaluate(_QUILL_TYPE_JS, prompt)
+    result = await page.evaluate(_QUILL_TYPE_JS, compact)
     written = result.get("text") or ""
     trace(
         "gemini_type_result",
         ok=result.get("ok"),
         written_len=len(written),
-        expected_len=len(prompt.strip()),
+        expected_len=len(compact.strip()),
         preview=written[:60],
     )
-    if not result.get("ok") or not _prompt_fully_written(prompt, written):
+    if not result.get("ok") or not _prompt_fully_written(compact, written):
         raise AiRouterError(
             "ADAPTER_ERROR",
             "Failed to type full prompt into Gemini input "
-            f"(expected_len={len(prompt.strip())}, written_len={len(written)})",
+            f"(expected_len={len(compact.strip())}, written_len={len(written)})",
         )
     await asyncio.sleep(0.2)
 

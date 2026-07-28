@@ -8,6 +8,7 @@ from ai_router.adapters.gemini.wait import (
     _QUILL_TYPE_JS,
     _prompt_fully_written,
     clear_prompt,
+    normalize_gemini_prompt,
     type_prompt,
 )
 from ai_router.errors import AiRouterError
@@ -45,9 +46,18 @@ def test_clear_prompt_raises_when_editor_missing():
         asyncio.run(clear_prompt(page))
 
 
-def test_quill_type_js_handles_multiline():
-    assert "insertLineBreak" in _QUILL_TYPE_JS
+def test_quill_type_js_uses_compact_single_paragraph_dom():
+    assert "createTextNode" in _QUILL_TYPE_JS
     assert "writeViaDom" in _QUILL_TYPE_JS
+
+
+def test_normalize_gemini_prompt_collapses_excessive_blank_lines():
+    raw = "Section A\n\n\n\nSection B\n   \n\nSection C"
+    assert normalize_gemini_prompt(raw) == "Section A\n\nSection B\n\nSection C"
+
+
+def test_normalize_gemini_prompt_strips_trailing_spaces():
+    assert normalize_gemini_prompt("line one   \nline two") == "line one\nline two"
 
 
 def test_prompt_fully_written_requires_substantive_lines():
@@ -57,7 +67,20 @@ def test_prompt_fully_written_requires_substantive_lines():
     assert _prompt_fully_written(prompt, "Line one only") is False
 
 
-def test_type_prompt_inserts_text_via_page_evaluate():
+def test_type_prompt_normalizes_before_evaluate():
+    page = MagicMock()
+    page.wait_for_selector = AsyncMock()
+    page.evaluate = AsyncMock(
+        return_value={"ok": True, "text": "A\n\nB", "expected_len": 4, "written_len": 4}
+    )
+
+    asyncio.run(type_prompt(page, "A\n\n\n\nB"))
+
+    _, sent = page.evaluate.await_args.args
+    assert sent == "A\n\nB"
+
+
+def test_type_prompt_single_line_unchanged():
     page = MagicMock()
     page.wait_for_selector = AsyncMock()
     page.evaluate = AsyncMock(
@@ -66,10 +89,8 @@ def test_type_prompt_inserts_text_via_page_evaluate():
 
     asyncio.run(type_prompt(page, "1+1"))
 
-    page.evaluate.assert_awaited_once()
-    js, text = page.evaluate.await_args.args
-    assert "insertText" in js
-    assert text == "1+1"
+    _, sent = page.evaluate.await_args.args
+    assert sent == "1+1"
 
 
 def test_type_prompt_raises_when_text_truncated():
