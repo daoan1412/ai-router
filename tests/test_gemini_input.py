@@ -4,7 +4,12 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from ai_router.adapters.gemini.selectors import SEL_GENERATING, SEL_PROMPT_INPUT
-from ai_router.adapters.gemini.wait import clear_prompt, type_prompt
+from ai_router.adapters.gemini.wait import (
+    _QUILL_TYPE_JS,
+    _prompt_fully_written,
+    clear_prompt,
+    type_prompt,
+)
 from ai_router.errors import AiRouterError
 
 
@@ -40,10 +45,24 @@ def test_clear_prompt_raises_when_editor_missing():
         asyncio.run(clear_prompt(page))
 
 
+def test_quill_type_js_handles_multiline():
+    assert "insertLineBreak" in _QUILL_TYPE_JS
+    assert "writeViaDom" in _QUILL_TYPE_JS
+
+
+def test_prompt_fully_written_requires_substantive_lines():
+    prompt = "Line one\n1) second\n2) third"
+    assert _prompt_fully_written(prompt, "Line one\n1) second\n2) third") is True
+    assert _prompt_fully_written(prompt, "Line one\n1) second") is True
+    assert _prompt_fully_written(prompt, "Line one only") is False
+
+
 def test_type_prompt_inserts_text_via_page_evaluate():
     page = MagicMock()
     page.wait_for_selector = AsyncMock()
-    page.evaluate = AsyncMock(return_value={"ok": True, "text": "1+1"})
+    page.evaluate = AsyncMock(
+        return_value={"ok": True, "text": "1+1", "expected_len": 3, "written_len": 3}
+    )
 
     asyncio.run(type_prompt(page, "1+1"))
 
@@ -53,10 +72,18 @@ def test_type_prompt_inserts_text_via_page_evaluate():
     assert text == "1+1"
 
 
-def test_type_prompt_raises_when_text_not_written():
+def test_type_prompt_raises_when_text_truncated():
     page = MagicMock()
     page.wait_for_selector = AsyncMock()
-    page.evaluate = AsyncMock(return_value={"ok": False, "text": "", "reason": "empty"})
+    page.evaluate = AsyncMock(
+        return_value={
+            "ok": True,
+            "text": "Explain the Raft algorithm:",
+            "expected_len": 100,
+            "written_len": 28,
+        }
+    )
+    prompt = "Explain the Raft algorithm:\n1) Node roles\n2) Terms"
 
-    with pytest.raises(AiRouterError, match="Failed to type"):
-        asyncio.run(type_prompt(page, "1+1"))
+    with pytest.raises(AiRouterError, match="Failed to type full prompt"):
+        asyncio.run(type_prompt(page, prompt))

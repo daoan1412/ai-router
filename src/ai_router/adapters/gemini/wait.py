@@ -56,10 +56,49 @@ _QUILL_CLEAR_JS = (
 )
 
 _QUILL_TYPE_JS = (
-    """(text) => {"""
+    """(text) => {
+    """
     + _FIND_EDITOR_BODY
     + """
     if (!el) return { ok: false, reason: 'no_editor', text: '' };
+
+    const dispatchInput = () => {
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new InputEvent('input', {
+            bubbles: true,
+            inputType: 'insertText',
+            data: text,
+        }));
+    };
+
+    const writeViaDom = (value) => {
+        el.classList.remove('ql-blank');
+        el.innerHTML = '';
+        for (const line of value.split(/\\r?\\n/)) {
+            const p = document.createElement('p');
+            if (line) {
+                p.textContent = line;
+            } else {
+                p.appendChild(document.createElement('br'));
+            }
+            el.appendChild(p);
+        }
+    };
+
+    const insertMultiline = (value) => {
+        const lines = value.split(/\\r?\\n/);
+        for (let i = 0; i < lines.length; i++) {
+            if (i > 0) {
+                if (!document.execCommand('insertLineBreak', false, null)) {
+                    document.execCommand('insertParagraph', false, null);
+                }
+            }
+            if (lines[i]) {
+                document.execCommand('insertText', false, lines[i]);
+            }
+        }
+    };
+
     el.focus();
     el.classList.remove('ql-blank');
     const sel = window.getSelection();
@@ -71,24 +110,33 @@ _QUILL_TYPE_JS = (
     }
     document.execCommand('selectAll', false, null);
     document.execCommand('delete', false, null);
-    let ok = document.execCommand('insertText', false, text);
-    if (!ok) {
-        let p = el.querySelector('p');
-        if (!p) {
-            p = document.createElement('p');
-            el.appendChild(p);
+
+    if (text.includes('\\n')) {
+        insertMultiline(text);
+    } else {
+        const ok = document.execCommand('insertText', false, text);
+        if (!ok) {
+            writeViaDom(text);
         }
-        p.textContent = text;
-        ok = true;
     }
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    el.dispatchEvent(new InputEvent('input', {
-        bubbles: true,
-        inputType: 'insertText',
-        data: text,
-    }));
-    const written = (el.innerText || el.textContent || '').trim();
-    return { ok: ok && written.length > 0, text: written };
+
+    let written = (el.innerText || el.textContent || '');
+    const expected = text.trim();
+    const writtenTrim = written.trim();
+    // Quill single-line mode may drop everything after the first newline.
+    if (expected.includes('\\n') && writtenTrim.length < expected.length * 0.85) {
+        writeViaDom(text);
+        written = (el.innerText || el.textContent || '');
+    }
+
+    dispatchInput();
+    written = written.trim();
+    return {
+        ok: written.length > 0 && written.length >= expected.length * 0.85,
+        text: written,
+        expected_len: expected.length,
+        written_len: written.length,
+    };
 }"""
 )
 
@@ -181,20 +229,32 @@ async def clear_prompt(page: Page) -> None:
         raise AiRouterError("ADAPTER_ERROR", "Gemini prompt input not found")
 
 
+def _prompt_fully_written(prompt: str, written: str) -> bool:
+    """True when the editor text contains the substantive lines we sent."""
+    expected_lines = [line.strip() for line in prompt.splitlines() if line.strip()]
+    if not expected_lines:
+        return bool(written.strip())
+    hits = sum(1 for line in expected_lines if line in written)
+    return hits >= max(1, len(expected_lines) - 1)
+
+
 async def type_prompt(page: Page, prompt: str) -> None:
     """Insert text into Gemini's Quill editor and fire the input events Send needs."""
     await _wait_prompt_input(page)
     result = await page.evaluate(_QUILL_TYPE_JS, prompt)
+    written = result.get("text") or ""
     trace(
         "gemini_type_result",
         ok=result.get("ok"),
-        written_len=len(result.get("text", "")),
-        preview=(result.get("text") or "")[:40],
+        written_len=len(written),
+        expected_len=len(prompt.strip()),
+        preview=written[:60],
     )
-    if not result.get("ok"):
+    if not result.get("ok") or not _prompt_fully_written(prompt, written):
         raise AiRouterError(
             "ADAPTER_ERROR",
-            f"Failed to type into Gemini input ({result.get('reason', 'empty')})",
+            "Failed to type full prompt into Gemini input "
+            f"(expected_len={len(prompt.strip())}, written_len={len(written)})",
         )
     await asyncio.sleep(0.2)
 
