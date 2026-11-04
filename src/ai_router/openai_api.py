@@ -1,12 +1,13 @@
 """Minimal OpenAI-compatible HTTP API in front of the browser providers.
 
 Exposes ``GET /v1/models`` and ``POST /v1/chat/completions`` so OpenAI-SDK
-clients can talk to the browser-automated providers (currently deepseek, qwen).
+clients can talk to the browser-automated providers (deepseek, qwen, zai, mimo).
 The assistant's reasoning is returned in ``message.reasoning_content`` (the
-DeepSeek-compatible field): DeepSeek's DeepThink block (R1 ids) and Qwen's
-"Thinking and Search" panel steps (whenever Qwen thinks). Web search and tools
-are kept off: DeepSeek's Search toggle per request, Qwen's tool/memory switches
-in account settings once per server run.
+DeepSeek-compatible field): DeepSeek's DeepThink block (R1 ids), Qwen's
+"Thinking and Search" panel steps (whenever Qwen thinks), and Z.ai / MiMo
+thinking. Web search and tools are kept off: DeepSeek's Search toggle per
+request, Qwen's tool/memory switches in account settings once per server run,
+MiMo's ``webSearchStatus`` in every request.
 
 Answers come from driving a real browser, so a request takes as long as the
 model does, and requests to the same provider are serialized (one tab each).
@@ -34,9 +35,10 @@ from ai_router.streaming import READY, Delta, collect
 class Target:
     """What an OpenRouter-style model id maps to in the browser UI."""
 
-    provider: str  # "deepseek" | "qwen" | "zai"
-    # Model picker choice: Qwen keyword ("Plus"/"Max"/"Flash") or Z.ai label
-    # ("GLM-5.3-Flash"/"GLM-5.3"/"GLM-5.2"); None for DeepSeek (one web model).
+    provider: str  # "deepseek" | "qwen" | "zai" | "mimo"
+    # Model picker choice: Qwen keyword ("Plus"/"Max"/"Flash"), Z.ai label
+    # ("GLM-5.3-Flash"/"GLM-5.3"/"GLM-5.2") or MiMo label ("MiMo-V2.6-Pro"/
+    # "MiMo-V2.6-Flash"); None for DeepSeek (one web model).
     model_choice: str | None
     deep_think: bool  # enable DeepSeek DeepThink
 
@@ -52,6 +54,8 @@ MODEL_MAP: dict[str, Target] = {
     "z-ai/glm-5.3-flash": Target("zai", "GLM-5.3-Flash", False),
     "z-ai/glm-5.3": Target("zai", "GLM-5.3", False),
     "z-ai/glm-5.2": Target("zai", "GLM-5.2", False),
+    "xiaomi/mimo-v2.6-pro": Target("mimo", "MiMo-V2.6-Pro", False),
+    "xiaomi/mimo-v2.6-flash": Target("mimo", "MiMo-V2.6-Flash", False),
 }
 
 
@@ -99,6 +103,9 @@ def resolve_target(model: str | None) -> Target | None:
         else:
             label = "GLM-5.3"  # glm-5.3, glm-5, glm-latest, older glm-4.x → best web model
         return Target("zai", label, False)
+    if vendor == "xiaomi" or key.startswith("mimo"):
+        label = "MiMo-V2.6-Flash" if "flash" in key else "MiMo-V2.6-Pro"
+        return Target("mimo", label, False)
     return None
 
 
@@ -316,6 +323,22 @@ class ProviderChatManager:
                 if model_choice:
                     await select_model(page, model_choice)  # ModelLockedError for guests
                 gen = chat_stream(page, prompt, timeout=300.0)
+            elif provider == "mimo":
+                from ai_router.adapters.mimo.auth import (
+                    MIMO_CHAT_URL,
+                    accept_agreement,
+                    chat_stream,
+                    is_signed_in,
+                    select_model,
+                )
+
+                await page.goto(MIMO_CHAT_URL, wait_until="domcontentloaded")
+                if not await is_signed_in(page):
+                    raise NotLoggedInError("mimo")
+                await accept_agreement(page)
+                if model_choice:
+                    await select_model(page, model_choice)
+                gen = chat_stream(page, prompt, timeout=300.0)
             else:
                 raise ValueError(f"Unknown provider: {provider}")
             yield READY
@@ -364,7 +387,7 @@ def create_app(cfg: AppConfig, *, headless: bool = False, keepalive_s: float = 1
             return JSONResponse(
                 error_body(
                     f"Unsupported model {body.get('model')!r}. See /v1/models "
-                    "(OpenRouter-style ids under deepseek/* and qwen/*).",
+                    "(OpenRouter-style ids under deepseek/*, qwen/*, z-ai/* and xiaomi/*).",
                     code="model_not_found",
                 ),
                 status_code=404,

@@ -68,13 +68,17 @@ def login(
     asyncio.run(_login(provider))
 
 
-async def _mailbox_source(ctx, reuse_email, subject_hint, log):
+async def _mailbox_source(ctx, reuse_email, subject_hint, log, link_env=None):
     """Return (email, get_code): keyless mailtemp.vn website, or the API if keyed.
 
     get_code is a coroutine that resolves to the verification code once it lands
     in the mailbox. subject_hint is the message subject fragment used to open the
-    right email on the website (ignored on the API path).
+    right email on the website (ignored on the API path). link_env names the .env
+    key holding the website box's reopen link (address + access token): saved
+    for a new box, used to reopen a reused one from any browser profile.
     """
+    from ai_router.dotenv import set_env_vars
+
     from ai_router import mailtemp_web
     from ai_router.mailtemp import MailtempClient
 
@@ -95,17 +99,26 @@ async def _mailbox_source(ctx, reuse_email, subject_hint, log):
 
     log("Mailbox source: mailtemp.vn website (keyless)")
     mt_page = await ctx.new_page()
+    after_count = None
     if reuse_email:
         email = reuse_email
         log(f"Reusing email: {email}")
-        await mt_page.goto(mailtemp_web.MT_URL, wait_until="networkidle")
+        link = os.getenv(link_env) if link_env else None
+        await mailtemp_web.open_mailbox(mt_page, email, link=link, log=log)
+        # The reused inbox still holds earlier codes: only read a newer message.
+        after_count = await mailtemp_web.count_messages(mt_page, subject_hint)
     else:
         # fresh=True forces a new empty address so a persisted profile can't
         # hand us an old message / stale code from a previous run.
         email = await mailtemp_web.create_mailbox(mt_page, fresh=True, log=log)
+        link = await mailtemp_web.mailbox_link(mt_page, email)
+        if link_env and link:
+            set_env_vars({link_env: link})
 
     async def get_code() -> str:
-        return await mailtemp_web.wait_for_code(mt_page, subject_hint=subject_hint, log=log)
+        return await mailtemp_web.wait_for_code(
+            mt_page, subject_hint=subject_hint, after_count=after_count, log=log
+        )
 
     return email, get_code
 
@@ -125,7 +138,9 @@ async def _provision_deepseek(prompt: str, reuse: bool, headless: bool) -> None:
     typer.echo("Launching browser (headed — finish any Cloudflare check yourself)...")
     ctx = await launch_persistent_context_async(str(cfg.profile_dir), headless=headless)
     try:
-        email, get_code = await _mailbox_source(ctx, reused_email, "verification code", log)
+        email, get_code = await _mailbox_source(
+            ctx, reused_email, "verification code", log, "DEEPSEEK_MAILBOX_LINK"
+        )
         env_path = set_env_vars({"DEEPSEEK_EMAIL": email, "DEEPSEEK_PASSWORD": password})
         typer.echo(f"Saved DEEPSEEK_EMAIL / DEEPSEEK_PASSWORD to {env_path}")
 
@@ -196,7 +211,9 @@ async def _provision_qwen(prompt: str, reuse: bool, headless: bool) -> None:
             typer.echo("Already logged in (saved session) — no email/code/puzzle needed.")
         else:
             # Qwen's sign-in email subject is "Your Qwen sign-in code".
-            email, get_code = await _mailbox_source(ctx, reused_email, "Qwen", log)
+            email, get_code = await _mailbox_source(
+                ctx, reused_email, "Qwen", log, "QWEN_MAILBOX_LINK"
+            )
             env_path = set_env_vars({"QWEN_EMAIL": email})
             typer.echo(f"Saved QWEN_EMAIL to {env_path} (Qwen is passwordless — code per login)")
             outcome = await qwen_sign_up(q_page, email=email, get_code=get_code, log=log)
@@ -344,6 +361,96 @@ def provision_zai(
     A signed-in account unlocks GLM-5.3 / GLM-5.2 (guests only get GLM-5.3-Flash).
     """
     asyncio.run(_provision_zai(prompt, reuse, headless))
+
+
+async def _provision_mimo(prompt: str, reuse: bool, headless: bool) -> None:
+    from ai_router.adapters.mimo.auth import (
+        CODE_SUBJECT_HINT,
+        MIMO_CHAT_URL,
+        MODEL_PRO,
+        chat,
+        is_signed_in,
+        mimo_sign_in,
+        mimo_sign_up,
+    )
+    from ai_router.dotenv import set_env_vars
+
+    def log(msg: str) -> None:
+        typer.echo(msg)
+
+    cfg = load_config()
+    cfg.profile_dir.mkdir(parents=True, exist_ok=True)
+    saved_email = os.getenv("MIMO_EMAIL") if reuse else None
+    saved_password = os.getenv("MIMO_PASSWORD") if reuse else None
+
+    typer.echo("Launching browser (headed — you tick Xiaomi's reCAPTCHA when it appears)...")
+    ctx = await launch_persistent_context_async(str(cfg.profile_dir), headless=headless)
+    try:
+        m_page = await ctx.new_page()
+        await m_page.goto(MIMO_CHAT_URL, wait_until="domcontentloaded")
+
+        if await is_signed_in(m_page):
+            typer.echo("Already signed in (saved session) — no email/captcha needed.")
+            outcome = "already_signed_in"
+        elif saved_email and saved_password:
+            typer.echo(f"Signing in as {saved_email}...")
+            # A new device is asked for an e-mail code: reopen the saved mailbox.
+            _, get_code = await _mailbox_source(
+                ctx, saved_email, CODE_SUBJECT_HINT, log, "MIMO_MAILBOX_LINK"
+            )
+            outcome = await mimo_sign_in(
+                m_page, email=saved_email, password=saved_password, get_code=get_code, log=log
+            )
+        else:
+            email, get_code = await _mailbox_source(
+                ctx, None, CODE_SUBJECT_HINT, log, "MIMO_MAILBOX_LINK"
+            )
+            password = _generate_password()
+            env_path = set_env_vars({"MIMO_EMAIL": email, "MIMO_PASSWORD": password})
+            typer.echo(f"Saved MIMO_EMAIL / MIMO_PASSWORD to {env_path}")
+            outcome = await mimo_sign_up(
+                m_page, email=email, password=password, get_code=get_code, log=log
+            )
+
+        if outcome == "needs_manual":
+            typer.echo("Could not confirm sign-in (reCAPTCHA unsolved or code expired).")
+            return
+        await m_page.goto(MIMO_CHAT_URL, wait_until="domcontentloaded")
+        if not await is_signed_in(m_page):
+            typer.echo("Not signed in — skipping the chat test.")
+            return
+        typer.echo("")
+        typer.echo(f"--- Smoke test chat ({MODEL_PRO}) ---")
+        answer, reasoning = await chat(m_page, prompt, log=log, model_label=MODEL_PRO)
+        typer.echo("")
+        if reasoning:
+            typer.echo(f"MiMo reasoning ({len(reasoning)} chars): {reasoning[:200]}...")
+        typer.echo("MiMo replied:")
+        typer.echo(answer or "(no answer captured)")
+    finally:
+        try:
+            await ctx.close()
+        except PlaywrightError:
+            pass
+
+
+@browser_app.command("provision-mimo")
+def provision_mimo(
+    prompt: Annotated[
+        str, typer.Option(help="Smoke-test prompt to send after login")
+    ] = "Say hello in one short sentence.",
+    reuse: Annotated[
+        bool,
+        typer.Option(help="Sign in with MIMO_EMAIL/MIMO_PASSWORD from .env instead of a new account"),
+    ] = False,
+    headless: Annotated[bool, typer.Option(help="Run headless (not recommended)")] = False,
+) -> None:
+    """Create a Xiaomi Account with a temp email (or sign in) for MiMo Studio, then chat.
+
+    Headed: tick Google's reCAPTCHA when it appears; the rest is automated
+    (form -> e-mail code from the mailbox -> MiMo user agreement).
+    """
+    asyncio.run(_provision_mimo(prompt, reuse, headless))
 
 
 @browser_app.command("status")

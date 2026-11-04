@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-from ai_router.mailtemp_web import extract_code, parse_address, pick_link
+from ai_router.mailtemp_web import box_link, extract_code, parse_address, pick_link
+
+
+def test_box_link_matches_site_link_format():
+    # Same URL as the site's "Link" button (web boxes reopen only with the token).
+    assert box_link("sg5vqp6c@braetoo.cutflow.io.vn", "tok123") == (
+        "https://mailtemp.vn/#addr=sg5vqp6c%40braetoo.cutflow.io.vn&t=tok123"
+    )
 
 
 def test_pick_link_finds_verify_link_not_page_links():

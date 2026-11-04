@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import re
 from collections.abc import Callable
+from urllib.parse import quote
 
 from playwright.async_api import Page
 
@@ -108,6 +109,57 @@ async def create_mailbox(page: Page, *, fresh: bool = False, log: Logger = _noop
     return address
 
 
+def box_link(address: str, token: str) -> str:
+    """The site's "Link" URL that reopens a web-created box from any browser."""
+    return f"{MT_URL}#addr={quote(address)}&t={token}"
+
+
+async def mailbox_link(page: Page, address: str) -> str | None:
+    """Reopen link for ``address`` from this profile's mailtemp storage
+    (``tmail2.boxes`` keeps each box's access token), or None."""
+    try:
+        boxes = await page.evaluate("() => JSON.parse(localStorage.getItem('tmail2.boxes') || '[]')")
+    except Exception:  # noqa: BLE001
+        return None
+    for box in boxes if isinstance(boxes, list) else []:
+        if isinstance(box, dict) and box.get("address") == address and box.get("token"):
+            return box_link(address, box["token"])
+    return None
+
+
+async def open_mailbox(
+    page: Page, address: str, *, link: str | None = None, log: Logger = _noop
+) -> None:
+    """Load mailtemp.vn on an existing ``address``.
+
+    A box created on the website only reopens with its access link (address +
+    token): pass the saved ``link``, or this profile's storage is used.
+    """
+    await page.goto(MT_URL, wait_until="networkidle")
+    await page.wait_for_timeout(1500)
+    if parse_address(await _body_text(page)) != address:
+        link = link or await mailbox_link(page, address)
+        if not link:
+            raise RuntimeError(
+                f"mailtemp.vn: no access link for {address} in this profile "
+                "(web-created boxes reopen only with their saved link)"
+            )
+        await page.goto(MT_URL, wait_until="domcontentloaded")
+        await page.goto(link, wait_until="networkidle")
+        await page.wait_for_timeout(2500)
+    current = parse_address(await _body_text(page))
+    if current != address:
+        raise RuntimeError(f"mailtemp.vn: could not open {address} (page shows {current})")
+    log(f"mailtemp opened: {address}")
+
+
+async def count_messages(page: Page, subject_hint: str) -> int:
+    """How many inbox entries mention ``subject_hint`` (0 for an empty inbox)."""
+    if EMPTY_MARKER in await _body_text(page):
+        return 0
+    return await page.get_by_text(subject_hint, exact=False).count()
+
+
 async def _read_code_from_frames(page: Page, min_digits: int) -> str | None:
     for fr in page.frames:
         try:
@@ -129,9 +181,14 @@ async def wait_for_code(
     timeout: float = 150.0,
     interval: float = 3.0,
     min_digits: int = 6,
+    after_count: int | None = None,
     log: Logger = _noop,
 ) -> str:
-    """Poll the inbox, open the newest matching message, read its code."""
+    """Poll the inbox, open the newest matching message, read its code.
+
+    after_count: matching entries already in a reused inbox (count_messages);
+    wait for one more before reading, so an old message's code isn't returned.
+    """
     deadline = asyncio.get_event_loop().time() + timeout
     opened = False
     while asyncio.get_event_loop().time() < deadline:
@@ -144,7 +201,8 @@ async def wait_for_code(
         await page.wait_for_timeout(1000)
 
         body = await _body_text(page)
-        if EMPTY_MARKER not in body:
+        fresh = after_count is None or await count_messages(page, subject_hint) > after_count
+        if EMPTY_MARKER not in body and fresh:
             if not opened:
                 try:
                     msg = page.get_by_text(subject_hint, exact=False).first

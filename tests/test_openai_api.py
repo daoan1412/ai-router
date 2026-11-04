@@ -51,6 +51,16 @@ def test_resolve_target_zai():
     assert resolve_target("glm-5.2").model_choice == "GLM-5.2"
 
 
+def test_resolve_target_mimo():
+    pro = resolve_target("xiaomi/mimo-v2.6-pro")
+    assert (pro.provider, pro.model_choice, pro.deep_think) == ("mimo", "MiMo-V2.6-Pro", False)
+    assert resolve_target("xiaomi/mimo-v2.6-flash").model_choice == "MiMo-V2.6-Flash"
+    # Older / other xiaomi slugs fall back by keyword.
+    assert resolve_target("xiaomi/mimo-v2-flash").model_choice == "MiMo-V2.6-Flash"
+    assert resolve_target("xiaomi/mimo-v2.5-pro").model_choice == "MiMo-V2.6-Pro"
+    assert resolve_target("mimo-v2.6-flash").provider == "mimo"
+
+
 def test_resolve_model_and_wants_reasoning_wrappers():
     assert resolve_model("qwen/qwen3.8-max-0902") == "qwen"
     assert resolve_model("deepseek/deepseek-chat") == "deepseek"

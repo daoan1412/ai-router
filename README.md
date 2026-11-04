@@ -147,6 +147,28 @@ mailtemp.vn website), then "Complete Registration". Credentials land in `.env`
 as `ZAI_EMAIL` / `ZAI_PASSWORD`. Signing in again also needs the puzzle; a saved
 session skips all of it.
 
+### Xiaomi MiMo Studio (aistudio.xiaomimimo.com)
+
+MiMo Studio needs a **Xiaomi Account** (guests can't chat). `provision-mimo`
+creates one with a temp email:
+
+```bash
+ai-router browser provision-mimo            # new Xiaomi Account + test chat
+ai-router browser provision-mimo --reuse    # sign in again with MIMO_EMAIL / MIMO_PASSWORD
+```
+
+Sign-up: email + password → Google **reCAPTCHA you tick by hand** (headed) →
+6-digit code from the mailbox → back on MiMo, the one-time user agreement is
+accepted. Credentials land in `.env` as `MIMO_EMAIL` / `MIMO_PASSWORD`. Signing
+in from a new browser profile triggers Xiaomi's "Account Authentication" step
+(another e-mail code), which `--reuse` handles too.
+
+**Reusing a mailbox:** a mailtemp.vn box created on the website reopens only
+with its access link (address + token, the site's "Link" button). Provisioning
+saves it as `<PROVIDER>_MAILBOX_LINK` in `.env` (DeepSeek, Qwen, MiMo), so
+`--reuse` can read new codes from any profile, ignoring the codes already in
+the inbox.
+
 ## OpenAI-compatible API
 
 Serve the browser providers behind an OpenAI-style HTTP API so any OpenAI SDK
@@ -171,17 +193,21 @@ ai-router serve-openai --port 8088
   | `z-ai/glm-5.3-flash` | GLM-5.3-Flash (guest OK) | GLM thinking |
   | `z-ai/glm-5.3` | GLM-5.3 (account) | GLM thinking |
   | `z-ai/glm-5.2` | GLM-5.2 (account) | GLM thinking |
+  | `xiaomi/mimo-v2.6-pro` | MiMo-V2.6-Pro | MiMo thinking |
+  | `xiaomi/mimo-v2.6-flash` | MiMo-V2.6-Flash | MiMo thinking |
 
-  (Qwen and Z.ai models are chosen in the web picker per request; any other
+  (Qwen, Z.ai and MiMo models are chosen in the web picker per request; any other
   `qwen/*` slug falls back by keyword — `max`→Max, `omni`/`flash`→Flash, else
   Plus — and any other `z-ai/*` slug to GLM-5.3, or GLM-5.3-Flash for
-  `flash`/`air`. A guest asking for an account-only model gets HTTP 401
+  `flash`/`air`; any other `xiaomi/*` slug to MiMo-V2.6-Pro, or Flash for
+  `flash`. A guest asking for an account-only model gets HTTP 401
   `model_requires_login`.)
 - The answer is in `message.content`, the reasoning in `message.reasoning_content`:
   DeepSeek's DeepThink block for `r1` ids, the step-by-step summary from Qwen's
   "Thinking and Search" panel (present whenever Qwen thinks), and GLM's thinking.
 - Answers are read from the page's own completion stream, captured through CDP
-  (DeepSeek `/api/v0/chat/completion`, Qwen and Z.ai `/api/v2/chat/completions`), so
+  (DeepSeek `/api/v0/chat/completion`, Qwen and Z.ai `/api/v2/chat/completions`,
+  MiMo `/open-apis/react/chat`), so
   `content` is the raw markdown with LaTeX exactly as the model wrote it, and
   streaming is token by token. If that stream isn't seen, it falls back to
   reading the rendered page (where math comes out as rendered glyphs).
@@ -192,7 +218,11 @@ ai-router serve-openai --port 8088
   Z.ai's web requests already send `web_search`/`image_generation`/VLM tools as
   off (checked for guests and accounts). It does run the chat in its
   "general agent" mode, so the model *could* pick a built-in skill; none was
-  seen in testing, and a non-answer phase is logged as a warning.
+  seen in testing, and a non-answer phase is logged as a warning. MiMo's chat
+  request carries `webSearchStatus`; it is rewritten to `"disabled"` on the way
+  out (it already defaults to that), so MiMo never searches. MiMo has no
+  thinking toggle in the web UI: the model reasons on its own and that text is
+  returned as `reasoning_content`.
 - Each request drives a real browser, so it is as slow as the model and requests
   to one provider are serialized.
 - `stream:true`: `delta.reasoning_content` first, then `delta.content`. Headers
