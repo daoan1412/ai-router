@@ -10,12 +10,13 @@ independent of where the mailbox lives.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
 
 from ai_router.adapters.deepseek.selectors import DEEPSEEK_URL, SEL_PROMPT_INPUT
 from ai_router.adapters.deepseek.wait import is_challenge_visible, read_response_snapshot
+from ai_router.streaming import Delta, collect, prefix_delta
 
 SIGN_IN_URL = "https://chat.deepseek.com/sign_in"
 
@@ -164,45 +165,199 @@ async def deepseek_sign_up(
     return "needs_manual"
 
 
-async def smoke_chat(page: Page, prompt: str, log: Logger = _noop, timeout: float = 180.0) -> str:
-    """Send one prompt via the DOM and return the assistant's reply text.
+# The reasoning/thinking block DeepSeek keeps in the DOM (persists post-answer).
+# Only produced when the DeepThink toggle is on.
+SEL_THINK = ".ds-think-content, [class*='think-content']"
 
-    A lightweight smoke test (not the full StateReducer gate): submit, wait for
-    a new assistant block, then read it once the text stops growing.
+
+async def _set_toggle(page: Page, label: str, on: bool, log: Logger = _noop) -> None:
+    """Force a composer toggle ("DeepThink" / "Search") on or off.
+
+    Toggle states persist across chats on the account, so they have to be set
+    explicitly both ways — otherwise a previous R1 request leaves DeepThink on
+    and a later 'deepseek-chat' request still thinks.
     """
-    from ai_router.adapters.deepseek.selectors import SEL_SUBMIT_BUTTON
-    from ai_router.adapters.deepseek.wait import ensure_new_chat, is_stop_visible
+    try:
+        toggle = page.locator(".ds-toggle-button", has_text=label).first
+        if await toggle.count() == 0:
+            return
+        cls = await toggle.get_attribute("class") or ""
+        if ("ds-toggle-button--selected" in cls) != on:
+            await toggle.click(timeout=3000)
+            await page.wait_for_timeout(400)
+            log(f"  {label} {'on' if on else 'off'}")
+    except Exception as exc:  # noqa: BLE001
+        log(f"  [warn] could not set {label}: {exc}")
 
-    await ensure_new_chat(page)
+
+async def _read_reasoning(page: Page) -> str | None:
+    """Text of the last assistant turn's thinking block, if present."""
+    blocks = page.locator(SEL_THINK)
+    count = await blocks.count()
+    if not count:
+        return None
+    try:
+        text = (await blocks.nth(count - 1).inner_text()).strip()
+    except Exception:  # noqa: BLE001
+        return None
+    return text or None
+
+
+async def chat_stream(
+    page: Page,
+    prompt: str,
+    *,
+    log: Logger = _noop,
+    timeout: float = 600.0,
+    new_chat: bool = True,
+    deep_think: bool = False,
+    poll: float = 0.3,
+    open_timeout: float = 20.0,
+) -> AsyncIterator[Delta]:
+    """Send one prompt and yield ("reasoning"|"content", delta) as DeepSeek generates.
+
+    Reads the page's own /completion stream via CDP: DeepThink reasoning
+    (THINK fragments) then the answer (RESPONSE fragments), both as raw
+    markdown/LaTeX. If that request isn't seen within ``open_timeout``, falls
+    back to reading the rendered page (where math comes out as glyphs).
+    """
+    from ai_router.adapters.deepseek.selectors import DEEPSEEK_COMPLETION_RE, SEL_SUBMIT_BUTTON
+    from ai_router.adapters.deepseek.stream import DeepSeekSSEParser
+    from ai_router.adapters.deepseek.wait import ensure_new_chat
+    from ai_router.browser.sse_tap import CDPStreamTap, SSELineBuffer
+
+    if new_chat:
+        await ensure_new_chat(page)
+    await _set_toggle(page, "DeepThink", deep_think, log)
+    await _set_toggle(page, "Search", False, log)  # never let answers web-search
     count_before, _ = await read_response_snapshot(page)
 
-    inp = page.locator(SEL_PROMPT_INPUT).first
-    await inp.click()
-    await inp.fill("")
-    await inp.type(prompt, delay=15)
-    log(f"Submitting prompt: {prompt!r}")
+    tap = CDPStreamTap(page, DEEPSEEK_COMPLETION_RE)
+    await tap.start()
+    try:
+        inp = page.locator(SEL_PROMPT_INPUT).first
+        await inp.click()
+        await inp.fill("")
+        await inp.type(prompt, delay=15)
+        log(f"Submitting prompt: {prompt!r}")
+        submit = page.locator(SEL_SUBMIT_BUTTON).first
+        if await submit.count() > 0 and not await submit.is_disabled():
+            await submit.click()
+        else:
+            await inp.press("Enter")
 
-    submit = page.locator(SEL_SUBMIT_BUTTON).first
-    if await submit.count() > 0 and not await submit.is_disabled():
-        await submit.click()
-    else:
-        await inp.press("Enter")
+        opened = await tap.next(open_timeout)
+        if opened is None or opened[0] != "open":
+            log("  completion stream not seen; reading the rendered page instead")
+            async for d in _dom_stream(page, count_before, timeout=timeout, poll=poll):
+                yield d
+            return
 
-    deadline = asyncio.get_event_loop().time() + timeout
+        status = opened[1]
+        lines = SSELineBuffer()
+        parser = DeepSeekSSEParser()
+        raw_head = ""  # for error reporting when the body isn't SSE
+        deadline = asyncio.get_event_loop().time() + timeout
+        while not parser.done:
+            remaining = deadline - asyncio.get_event_loop().time()
+            item = await tap.next(remaining) if remaining > 0 else None
+            if item is None:
+                log("  [warn] DeepSeek stream timed out")
+                break
+            kind, value = item
+            if kind == "text":
+                if len(raw_head) < 2000:
+                    raw_head += value
+                for obj in lines.feed(value):
+                    for d in parser.feed(obj):
+                        yield d
+                if parser.error:
+                    raise RuntimeError(f"DeepSeek error: {parser.error}")
+            elif kind == "end":
+                for obj in lines.flush():
+                    for d in parser.feed(obj):
+                        yield d
+                break
+            elif kind == "error":
+                log(f"  [warn] stream tap: {value}")
+
+        if status >= 400 or (not parser.got_any and raw_head.strip()):
+            raise RuntimeError(f"DeepSeek HTTP {status}: {raw_head.strip()[:300]}")
+        if parser.error:
+            raise RuntimeError(f"DeepSeek error: {parser.error}")
+        if parser.other_types:
+            log(f"  [warn] DeepSeek produced non-answer fragments: {sorted(parser.other_types)}")
+    finally:
+        await tap.stop()
+
+
+async def _dom_stream(
+    page: Page, count_before: int, *, timeout: float, poll: float
+) -> AsyncIterator[Delta]:
+    """Fallback: stream from the rendered page (.ds-think-content + answer)."""
+    from ai_router.adapters.deepseek.wait import is_stop_visible
+
+    sent_content = ""
+    sent_reasoning = ""
     last_text = ""
     stable_ticks = 0
+    deadline = asyncio.get_event_loop().time() + timeout
     while asyncio.get_event_loop().time() < deadline:
-        count, text = await read_response_snapshot(page)
         generating = await is_stop_visible(page)
-        if count > count_before and text and not generating:
-            if text == last_text:
-                stable_ticks += 1
-                if stable_ticks >= 4:
-                    return text
+        sent_reasoning, d = prefix_delta(sent_reasoning, await _read_reasoning(page) or "")
+        if d:
+            yield ("reasoning", d)
+        count, text = await read_response_snapshot(page)
+        if count > count_before:
+            sent_content, d = prefix_delta(sent_content, text)
+            if d:
+                yield ("content", d)
+            if text and not generating:
+                if text == last_text:
+                    stable_ticks += 1
+                    if stable_ticks >= 4:
+                        break
+                else:
+                    stable_ticks = 0
+                    last_text = text
             else:
                 stable_ticks = 0
-                last_text = text
-        else:
-            last_text = text
-        await asyncio.sleep(0.5)
-    return last_text
+        await asyncio.sleep(poll)
+
+    # Final reconcile: pick up anything appended after the last tick.
+    _, d = prefix_delta(sent_reasoning, await _read_reasoning(page) or "")
+    if d:
+        yield ("reasoning", d)
+    count, text = await read_response_snapshot(page)
+    if count > count_before:
+        _, d = prefix_delta(sent_content, text)
+        if d:
+            yield ("content", d)
+
+
+async def chat(
+    page: Page,
+    prompt: str,
+    *,
+    log: Logger = _noop,
+    timeout: float = 600.0,
+    new_chat: bool = True,
+    deep_think: bool = False,
+) -> tuple[str, str | None]:
+    """Send one prompt; return (answer, reasoning).
+
+    reasoning is DeepSeek's thinking block (.ds-think-content), populated when
+    deep_think=True enables the DeepThink toggle; otherwise None. answer always
+    excludes the thinking block.
+    """
+    return await collect(
+        chat_stream(
+            page, prompt, log=log, timeout=timeout, new_chat=new_chat, deep_think=deep_think
+        )
+    )
+
+
+async def smoke_chat(page: Page, prompt: str, log: Logger = _noop, timeout: float = 180.0) -> str:
+    """Back-compat wrapper used by provision-deepseek: returns just the answer."""
+    answer, _ = await chat(page, prompt, log=log, timeout=timeout, new_chat=True)
+    return answer

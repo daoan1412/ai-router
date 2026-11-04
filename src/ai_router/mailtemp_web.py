@@ -67,22 +67,41 @@ async def _body_text(page: Page) -> str:
         return ""
 
 
+async def _click_new_address(page: Page) -> None:
+    for finder in (
+        lambda: page.get_by_role("button", name=NEW_ADDRESS_LABEL, exact=False).first,
+        lambda: page.get_by_text(NEW_ADDRESS_LABEL, exact=False).first,
+    ):
+        loc = finder()
+        try:
+            if await loc.count():
+                await loc.click(timeout=3000)
+                return
+        except Exception:  # noqa: BLE001
+            continue
+
+
 async def create_mailbox(page: Page, *, fresh: bool = False, log: Logger = _noop) -> str:
     """Load mailtemp.vn and return the current temporary address.
 
-    fresh=True clicks "Địa chỉ mới" for a brand-new address.
+    fresh=True clicks "Địa chỉ mới" until the address actually changes, so a
+    persisted profile can't hand back a previous (non-empty) mailbox.
     """
     await page.goto(MT_URL, wait_until="networkidle")
     await page.wait_for_timeout(2500)
-    if fresh:
-        try:
-            btn = page.get_by_text(NEW_ADDRESS_LABEL, exact=False).first
-            if await btn.count():
-                await btn.click()
-                await page.wait_for_timeout(1500)
-        except Exception:  # noqa: BLE001
-            pass
     address = parse_address(await _body_text(page))
+
+    if fresh:
+        prev = address
+        for _ in range(4):
+            await _click_new_address(page)
+            await page.wait_for_timeout(2000)
+            address = parse_address(await _body_text(page))
+            if address and address != prev:
+                break
+        else:
+            log("  [warn] could not rotate to a new mailtemp address; using current one")
+
     if not address:
         raise RuntimeError("mailtemp.vn: could not read the mailbox address from the page")
     log(f"mailtemp address: {address}")

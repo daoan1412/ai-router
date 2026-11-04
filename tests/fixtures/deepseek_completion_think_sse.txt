@@ -1,0 +1,223 @@
+event: ready
+data: {"request_message_id":1,"response_message_id":2,"model_type":"default"}
+
+event: update_session
+data: {"updated_at":1793774481.0252779}
+
+data: {"v":{"response":{"message_id":2,"parent_id":1,"model":"","role":"ASSISTANT","thinking_enabled":true,"ban_edit":false,"ban_regenerate":false,"status":"WIP","incomplete_message":null,"accumulated_token_usage":0,"feedback":null,"inserted_at":1793774481.013628,"search_enabled":false,"fragments":[{"id":2,"type":"THINK","content":"We","elapsed_secs":null,"references":[],"stage_id":1}],"conversation_mode":"DEFAULT","has_pending_fragment":false,"auto_continue":false,"search_triggered":false,"extra_search_providers":[]}}}
+
+data: {"p":"response/fragments/-1/content","o":"APPEND","v":" need"}
+
+data: {"v":" answer"}
+
+data: {"v":" Vietnamese"}
+
+data: {"v":"."}
+
+data: {"v":" Need"}
+
+data: {"v":" solve"}
+
+data: {"v":" concise"}
+
+data: {"v":" with"}
+
+data: {"v":" La"}
+
+data: {"v":"TeX"}
+
+data: {"v":"."}
+
+data: {"v":" Equation"}
+
+data: {"v":" x"}
+
+data: {"v":"^"}
+
+data: {"v":"2"}
+
+data: {"v":"-"}
+
+data: {"v":"5"}
+
+data: {"v":"x"}
+
+data: {"v":"+"}
+
+data: {"v":"6"}
+
+data: {"v":"="}
+
+data: {"v":"0"}
+
+data: {"v":" factors"}
+
+data: {"v":" ("}
+
+data: {"v":"x"}
+
+data: {"v":"-"}
+
+data: {"v":"2"}
+
+data: {"v":")("}
+
+data: {"v":"x"}
+
+data: {"v":"-"}
+
+data: {"v":"3"}
+
+data: {"v":")="}
+
+data: {"v":"0"}
+
+data: {"v":" =>"}
+
+data: {"v":" x"}
+
+data: {"v":"="}
+
+data: {"v":"2"}
+
+data: {"v":","}
+
+data: {"v":"3"}
+
+data: {"v":"."}
+
+data: {"v":" Need"}
+
+data: {"v":" use"}
+
+data: {"v":" La"}
+
+data: {"v":"TeX"}
+
+data: {"v":" short"}
+
+data: {"v":"."}
+
+data: {"v":" final"}
+
+data: {"v":"."}
+
+data: {"p":"response/fragments/-1/elapsed_secs","o":"SET","v":0.912505081}
+
+data: {"p":"response/fragments","o":"APPEND","v":[{"id":3,"type":"RESPONSE","content":"\\[","references":[],"stage_id":1}]}
+
+data: {"p":"response/fragments/-1/content","v":"\n"}
+
+data: {"v":"x"}
+
+data: {"v":"^"}
+
+data: {"v":"2"}
+
+data: {"v":"-"}
+
+data: {"v":"5"}
+
+data: {"v":"x"}
+
+data: {"v":"+"}
+
+data: {"v":"6"}
+
+data: {"v":"="}
+
+data: {"v":"0"}
+
+data: {"v":"\n"}
+
+data: {"v":"\\"}
+
+data: {"v":"iff"}
+
+data: {"v":" ("}
+
+data: {"v":"x"}
+
+data: {"v":"-"}
+
+data: {"v":"2"}
+
+data: {"v":")("}
+
+data: {"v":"x"}
+
+data: {"v":"-"}
+
+data: {"v":"3"}
+
+data: {"v":")="}
+
+data: {"v":"0"}
+
+data: {"v":"\n"}
+
+data: {"v":"\\"}
+
+data: {"v":"iff"}
+
+data: {"v":" x"}
+
+data: {"v":"="}
+
+data: {"v":"2"}
+
+data: {"v":" \\"}
+
+data: {"v":"text"}
+
+data: {"v":"{"}
+
+data: {"v":" ho"}
+
+data: {"v":"ặc"}
+
+data: {"v":" }"}
+
+data: {"v":" x"}
+
+data: {"v":"="}
+
+data: {"v":"3"}
+
+data: {"v":".\n"}
+
+data: {"v":"\\]\n\n"}
+
+data: {"v":"V"}
+
+data: {"v":"ậy"}
+
+data: {"v":" \\("}
+
+data: {"v":"S"}
+
+data: {"v":"=\\{"}
+
+data: {"v":"2"}
+
+data: {"v":";"}
+
+data: {"v":"3"}
+
+data: {"v":"\\"}
+
+data: {"v":"}\\)."}
+
+data: {"p":"response","o":"BATCH","v":[{"p":"accumulated_token_usage","v":139},{"p":"quasi_status","v":"FINISHED"}]}
+
+data: {"p":"response/status","o":"SET","v":"FINISHED"}
+
+event: update_session
+data: {"updated_at":1793774481.64248}
+
+event: title
+data: {"content":"Giải pt bậc 2"}
+
+event: close
+data: {"click_behavior":"none","auto_resume":false}
+

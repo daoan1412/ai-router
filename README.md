@@ -115,6 +115,88 @@ password and confirm-password, but if Cloudflare's Turnstile appears, solve it
 in the window — the command waits up to 5 min for login. Credentials land in
 `.env` as `DEEPSEEK_EMAIL` / `DEEPSEEK_PASSWORD` (gitignored).
 
+### Auto-provision a Qwen account (temp email)
+
+`provision-qwen` does the same for [chat.qwen.ai](https://chat.qwen.ai). Qwen is
+**passwordless** (email + sign-in code), so it saves only `QWEN_EMAIL`.
+
+```bash
+ai-router browser provision-qwen
+ai-router browser provision-qwen --reuse
+ai-router browser provision-qwen --prompt "What is 2+2?"
+```
+
+Qwen shows an Alibaba **drag-puzzle** after the email step that cannot be
+auto-solved, so the browser is **headed and you drag the slider by hand**; the
+rest is automated (email → code from mailtemp → 6-digit entry → age gate →
+chat). Verified end to end: the smoke chat returns a real answer.
+
+## OpenAI-compatible API
+
+Serve the browser providers behind an OpenAI-style HTTP API so any OpenAI SDK
+client can call them. Providers must already be logged in (`provision-*` or
+`browser login`).
+
+```bash
+ai-router serve-openai --port 8088
+```
+
+- `GET /v1/models` and `POST /v1/chat/completions`.
+- **Model ids follow OpenRouter's naming** (`vendor/slug`); any `deepseek/*` or
+  `qwen/*` slug resolves to the nearest web model:
+
+  | OpenRouter id | Web model | Reasoning |
+  |---|---|---|
+  | `deepseek/deepseek-chat` | DeepSeek | off |
+  | `deepseek/deepseek-r1-0528` | DeepSeek + DeepThink | DeepThink block |
+  | `qwen/qwen3.7-plus` | Qwen3.7-Plus | thinking summary |
+  | `qwen/qwen3.8-max-0902` | Qwen3.8-Max | thinking summary |
+  | `qwen/qwen3.8-omni-flash` | Qwen3.8-Omni-Flash | thinking summary |
+
+  (Qwen model is chosen in the web picker per request; any other `qwen/*` slug
+  falls back by keyword — `max`→Max, `omni`/`flash`→Flash, else Plus.)
+- The answer is in `message.content`, the reasoning in `message.reasoning_content`:
+  DeepSeek's DeepThink block for `r1` ids, and for Qwen the step-by-step summary
+  from its "Thinking and Search" panel (present whenever Qwen thinks).
+- Answers are read from the page's own completion stream, captured through CDP
+  (DeepSeek `/api/v0/chat/completion`, Qwen `/api/v2/chat/completions`), so
+  `content` is the raw markdown with LaTeX exactly as the model wrote it, and
+  streaming is token by token. If that stream isn't seen, it falls back to
+  reading the rendered page (where math comes out as rendered glyphs).
+- **No web search or tools:** DeepSeek's Search toggle is forced off per request;
+  for Qwen, every switch under Settings → Personalization (web search, web
+  scraping, image search/generation/editing, code interpreter, memory) is turned
+  off once per server run and by `provision-qwen`. This is an account setting.
+- Each request drives a real browser, so it is as slow as the model and requests
+  to one provider are serialized.
+- `stream:true`: `delta.reasoning_content` first, then `delta.content`. Headers
+  go out as soon as the provider is confirmed logged in (a not-logged-in provider
+  still returns HTTP 401), and an SSE `: keep-alive` comment is sent every 15 s
+  while nothing new arrives.
+- DeepThink is set explicitly per request (on for `r1`, off otherwise), because
+  DeepSeek remembers the toggle across chats.
+- The MCP `ask` tool (`ai-router serve`) still reads answers from the rendered
+  page; only `serve-openai` uses the completion stream.
+
+```python
+from openai import OpenAI
+client = OpenAI(base_url="http://127.0.0.1:8088/v1", api_key="unused")
+r = client.chat.completions.create(
+    model="deepseek/deepseek-r1-0528",
+    messages=[{"role": "user", "content": "What is 17*23?"}],
+)
+print(r.choices[0].message.content)
+print(r.choices[0].message.reasoning_content)
+
+for chunk in client.chat.completions.create(
+    model="deepseek/deepseek-r1-0528",
+    messages=[{"role": "user", "content": "Write a haiku about rain."}],
+    stream=True,
+):
+    d = chunk.choices[0].delta
+    print(getattr(d, "reasoning_content", None) or d.content or "", end="", flush=True)
+```
+
 ## Connect MCP client
 
 Works with any MCP client that supports stdio — **Cursor**, **Claude Code**, **Claude Desktop**, and others.
