@@ -33,7 +33,7 @@ class BrowserClosedError(AiRouterError):
         super().__init__(
             "BROWSER_CLOSED",
             "Browser window was closed. Keep the headed browser open while ai serve is running, "
-            "or restart: poetry run ai serve",
+            "or restart: uv run ai-router serve",
         )
 
 

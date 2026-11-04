@@ -1,40 +1,47 @@
-[tool.poetry]
+[project]
 name = "mcp-ai-router"
 version = "0.1.9"
-description = "Stdio MCP server for Cursor, Claude Code, and other clients — route prompts to Gemini, ChatGPT, Claude, DeepSeek & Kimi via browser sessions. pipx install mcp-ai-router"
-authors = ["Olivier Taylor <olivier.taylor.work@gmail.com>"]
+description = "Stdio MCP server for Cursor, Claude Code, and other clients — route prompts to Gemini, ChatGPT, Claude, DeepSeek & Kimi via browser sessions. uv tool install mcp-ai-router"
+authors = [{ name = "Olivier Taylor", email = "olivier.taylor.work@gmail.com" }]
 license = "MIT"
+license-files = ["LICENSE"]
 readme = "README.md"
-homepage = "https://github.com/scriptkid23/ai-router"
-repository = "https://github.com/scriptkid23/ai-router"
 keywords = ["mcp", "gemini", "chatgpt", "claude", "deepseek", "kimi", "cursor", "ai"]
-packages = [{ include = "ai_router", from = "src" }]
+requires-python = ">=3.11,<4"
 classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
-  "License :: OSI Approved :: MIT License",
   "Operating System :: OS Independent",
 ]
+dependencies = [
+  "typer>=0.15,<0.16",
+  "cloakbrowser>=0.4.10,<0.5",
+  "mcp>=1.13,<2",
+  "uvicorn>=0.30",
+  "pyyaml>=6.0,<7",
+]
 
-[tool.poetry.dependencies]
-python = ">=3.11,<4"
-typer = { extras = ["all"], version = "^0.15" }
-cloakbrowser = "^0.4.10"
-mcp = ">=1.6,<2"
-uvicorn = "^0.30"
-pyyaml = "^6.0"
+[project.urls]
+Homepage = "https://github.com/scriptkid23/ai-router"
+Repository = "https://github.com/scriptkid23/ai-router"
 
-[tool.poetry.group.dev.dependencies]
-pytest = "^8.0"
-pytest-asyncio = "^0.24"
-ruff = "^0.6"
-
-[tool.poetry.scripts]
+[project.scripts]
 ai-router = "ai_router.cli.main:app"
 
+[dependency-groups]
+dev = [
+  "pytest>=8.0,<9",
+  "pytest-asyncio>=0.24,<0.25",
+  "ruff>=0.6,<0.7",
+]
+
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["uv_build>=0.13,<0.14"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-root = "src"
+module-name = "ai_router"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

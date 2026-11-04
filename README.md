@@ -6,14 +6,14 @@ It automates authenticated **Gemini**, **ChatGPT**, **Claude**, **DeepSeek**, an
 
 | | Name |
 |---|------|
-| **PyPI / pipx** | [`mcp-ai-router`](https://pypi.org/project/mcp-ai-router/) |
+| **PyPI / uv** | [`mcp-ai-router`](https://pypi.org/project/mcp-ai-router/) |
 | **CLI command** | `ai-router` |
 | **GitHub** | [scriptkid23/ai-router](https://github.com/scriptkid23/ai-router) |
 
 ## Quick start
 
 ```bash
-pipx install mcp-ai-router          # 1. install
+uv tool install mcp-ai-router       # 1. install
 ai-router browser login             # 2. log in (opens browser windows)
 ai-router browser status            # 3. expect gemini/chatgpt/claude/deepseek/kimi: logged_in
 ```
@@ -26,24 +26,25 @@ Add MCP config (see [Connect MCP client](#connect-mcp-client)), reload your clie
 
 | Tool | Version |
 |------|---------|
-| Python | 3.11+ |
-| [pipx](https://pypa.github.io/pipx/) | latest |
+| Python | 3.11+ (uv installs it for you if missing) |
+| [uv](https://docs.astral.sh/uv/) | 0.13+ |
 | Disk + network | ~200 MB free for first browser download |
 
-Tested on **macOS**, **Linux**, and **Windows**. No Poetry, Node.js, or repo clone required for normal stdio MCP use.
+Tested on **macOS**, **Linux**, and **Windows**. No Node.js or repo clone required for normal stdio MCP use.
 
 **Provider accounts:** valid Gemini, ChatGPT, Claude, DeepSeek, and/or Kimi web accounts (free tiers work). Login is manual via the browser UI.
 
 ## Install
 
 ```bash
-python3 -m pip install --user pipx   # use py -m pip on Windows if needed
-python3 -m pipx ensurepath
-# open a new terminal
-pipx install mcp-ai-router
+# install uv itself (pick one)
+curl -LsSf https://astral.sh/uv/install.sh | sh    # macOS / Linux
+winget install astral-sh.uv                        # Windows
+# open a new terminal, then:
+uv tool install mcp-ai-router
 ```
 
-See [pipx installation docs](https://pypa.io/stable/installation/) if the commands above fail. On Unix, `pipx ensurepath` usually adds `~/.local/bin` to your shell PATH.
+uv provisions its own Python 3.11+ for the tool, so no system Python is required. See [uv installation docs](https://docs.astral.sh/uv/getting-started/installation/) if the commands above fail. `uv tool install` puts `ai-router` in uv's tool bin directory — run `uv tool update-shell` if it is not on your PATH.
 
 Verify:
 
@@ -55,13 +56,13 @@ ai-router --help
 Upgrade later:
 
 ```bash
-pipx upgrade mcp-ai-router
+uv tool upgrade mcp-ai-router
 ```
 
 Uninstall:
 
 ```bash
-pipx uninstall mcp-ai-router
+uv tool uninstall mcp-ai-router
 # optional manual cleanup:
 # rm -rf ~/.ai-router ~/.cloakbrowser
 ```
@@ -92,7 +93,7 @@ ai-router browser status
 ```
 
 > **CloakBrowser download (first use)**  
-> `pipx install` does **not** download the browser. The first `browser login` or `ask` triggers a one-time download of a CloakBrowser-managed Chromium binary (~200 MB) to `~/.cloakbrowser/`. You do **not** need `playwright install` or a separate Chrome install — automation uses the CloakBrowser binary, not your local Chrome app.
+> `uv tool install` does **not** download the browser. The first `browser login` or `ask` triggers a one-time download of a CloakBrowser-managed Chromium binary (~200 MB) to `~/.cloakbrowser/`. You do **not** need `playwright install` or a separate Chrome install — automation uses the CloakBrowser binary, not your local Chrome app.
 
 ## Connect MCP client
 
@@ -222,10 +223,10 @@ Precedence: environment variables override YAML; YAML overrides defaults.
 
 | Problem | Fix |
 |---------|-----|
-| `pipx: command not found` | Use `python3 -m pipx` |
-| `ai-router: command not found` | Run `pipx ensurepath`, open a new terminal |
+| `uv: command not found` | Install uv (see [Install](#install)), then open a new terminal |
+| `ai-router: command not found` | Run `uv tool update-shell`, open a new terminal |
 | MCP client cannot find `ai-router` | Use absolute path in `"command"` |
-| `pipx install mcp-ai-router` fails | Check Python ≥ 3.11 and https://pypi.org/project/mcp-ai-router/ |
+| `uv tool install mcp-ai-router` fails | Run `uv self update`, then check https://pypi.org/project/mcp-ai-router/ |
 | `gemini: logged_out` / `NOT_LOGGED_IN` | Run `ai-router browser login` |
 | Slow first login or first `ask` | CloakBrowser downloading ~200 MB, or cold browser start |
 | Browser does not open | Needs network + disk; requires `cloakbrowser` ≥ 0.4.4 |
@@ -259,24 +260,25 @@ HTTP binds to localhost only and has **no authentication** — do not expose it 
 ```bash
 git clone https://github.com/scriptkid23/ai-router.git
 cd ai-router
-poetry install
-poetry run pytest -v
-poetry run ruff check src tests
-poetry run ai-router serve --transport http
+uv sync                 # creates .venv from uv.lock, incl. the dev group
+uv run pytest -v
+uv run ruff check src tests
+uv run ai-router serve --transport http
 ```
+
+Dependencies are declared in `pyproject.toml` (PEP 621) and pinned in `uv.lock`; commit the lockfile with any dependency change. Add or drop packages with `uv add <pkg>` / `uv remove <pkg>` (`--dev` for the dev group) rather than editing the file by hand, and refresh pins with `uv lock --upgrade`.
 
 Smoke-test a wheel (macOS/Linux example):
 
 ```bash
-poetry build
-pipx install --force dist/mcp_ai_router-*.whl
+uv build
+uv tool install --force dist/mcp_ai_router-*.whl
 mkdir -p /tmp/ai-router-smoke && cd /tmp/ai-router-smoke
 ai-router --help && ai-router --version && ai-router browser status
 ```
 
 ## Security
 
-- Prompts are sent to Gemini, ChatGPT, Claude, DeepSeek, and Kimi **web UIs** — provider privacy and terms apply. Review each provider's terms; web automation may violate some account policies.
 - `~/.ai-router/profile/` holds live session cookies — treat like a password. Deleting it logs you out locally.
 - Logs may be written to `~/.ai-router/logs/` and stderr.
 - HTTP debug mode binds to `127.0.0.1` with no auth — localhost only.
