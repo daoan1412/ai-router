@@ -66,6 +66,9 @@ def _defaults() -> AppConfig:
 
 
 def load_config(path: Path | None = None) -> AppConfig:
+    from ai_router.dotenv import load_dotenv
+
+    load_dotenv()
     cfg = _defaults()
     config_path = path or DEFAULT_CONFIG_PATH
     if config_path.exists():

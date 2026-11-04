@@ -95,6 +95,26 @@ ai-router browser status
 > **CloakBrowser download (first use)**  
 > `uv tool install` does **not** download the browser. The first `browser login` or `ask` triggers a one-time download of a CloakBrowser-managed Chromium binary (~200 MB) to `~/.cloakbrowser/`. You do **not** need `playwright install` or a separate Chrome install — automation uses the CloakBrowser binary, not your local Chrome app.
 
+### Auto-provision a DeepSeek account (temp email)
+
+Instead of logging in manually, `provision-deepseek` creates a disposable
+mailbox on [mailtemp.vn](https://mailtemp.vn), signs up DeepSeek by email, reads
+the verification code from that mailbox, saves the credentials to a project
+`.env`, and sends one smoke-test chat.
+
+```bash
+ai-router browser provision-deepseek                   # new mailbox + account + test chat
+ai-router browser provision-deepseek --reuse           # reuse DEEPSEEK_EMAIL/PASSWORD from .env
+ai-router browser provision-deepseek --prompt "What is 2+2?"
+```
+
+By default this uses the mailtemp.vn **website** — no API key needed. (The
+mailtemp.vn *API* requires `x-api-key`; set `MAILTEMP_API_KEY` in `.env` to use
+that path instead.) The browser runs **headed**: automation fills email, code,
+password and confirm-password, but if Cloudflare's Turnstile appears, solve it
+in the window — the command waits up to 5 min for login. Credentials land in
+`.env` as `DEEPSEEK_EMAIL` / `DEEPSEEK_PASSWORD` (gitignored).
+
 ## Connect MCP client
 
 Works with any MCP client that supports stdio — **Cursor**, **Claude Code**, **Claude Desktop**, and others.
