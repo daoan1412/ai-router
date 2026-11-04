@@ -65,11 +65,19 @@ class CDPStreamTap:
 
     Usage: ``await tap.start()`` before triggering the request, then poll
     ``await tap.next(timeout)``; always ``await tap.stop()``.
+
+    follow=True: every newer matching response replaces the current one (a
+    long-poll channel that reconnects or restarts its session, e.g. WebChannel's
+    backchannel — the newest is the live one). Each starts with ("open", status);
+    a followed response's end is reported as ("end", None).
     """
 
-    def __init__(self, page: Page, url_match: str | re.Pattern[str]) -> None:
+    def __init__(
+        self, page: Page, url_match: str | re.Pattern[str], *, follow: bool = False
+    ) -> None:
         self.page = page
         self.url_match = url_match
+        self.follow = follow
         self.status: int | None = None
         self._cdp = None
         self._rid: str | None = None
@@ -113,31 +121,46 @@ class CDPStreamTap:
         return self.url_match.search(url) is not None
 
     def _on_response(self, params: dict) -> None:
-        if self._rid is not None or not self._matches(params["response"]["url"]):
+        if not self._matches(params["response"]["url"]):
             return
+        if self._rid is not None:
+            if not self.follow:
+                return
+            # Switch to the newer channel: fresh per-response state.
+            self._decoder = codecs.getincrementaldecoder("utf-8")()
+            self._enabled = self._ended_early = self._ended = False
+            self._held = []
         self._rid = params["requestId"]
         self.status = int(params["response"]["status"])
         self._queue.put_nowait(("open", self.status))
         asyncio.ensure_future(self._enable(self._rid))
 
-    async def _enable(self, rid: str) -> None:
+    async def _initial_body(self, rid: str) -> bytes:
+        """Bytes received before streaming was enabled (or the whole body if done)."""
         try:
             r = await self._cdp.send("Network.streamResourceContent", {"requestId": rid})
-            self._emit(base64.b64decode(r.get("bufferedData") or ""))
+            return base64.b64decode(r.get("bufferedData") or "")
         except Exception:  # noqa: BLE001 - e.g. already finished: read it whole
             try:
                 r = await self._cdp.send("Network.getResponseBody", {"requestId": rid})
                 body = r.get("body") or ""
-                self._emit(base64.b64decode(body) if r.get("base64Encoded") else body.encode())
+                return base64.b64decode(body) if r.get("base64Encoded") else body.encode()
             except Exception as exc:  # noqa: BLE001
-                self._queue.put_nowait(("error", str(exc)))
-        finally:
-            self._enabled = True
-            for raw in self._held:
-                self._emit(raw)
-            self._held.clear()
-            if self._ended_early:
-                self._finish()
+                if rid == self._rid:
+                    self._queue.put_nowait(("error", str(exc)))
+                return b""
+
+    async def _enable(self, rid: str) -> None:
+        data = await self._initial_body(rid)
+        if rid != self._rid:
+            return  # a newer channel took over meanwhile (follow mode)
+        self._emit(data)
+        self._enabled = True
+        for raw in self._held:
+            self._emit(raw)
+        self._held.clear()
+        if self._ended_early:
+            self._finish()
 
     def _on_data(self, params: dict) -> None:
         if params["requestId"] != self._rid or not params.get("data"):

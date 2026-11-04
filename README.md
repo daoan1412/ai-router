@@ -147,6 +147,26 @@ mailtemp.vn website), then "Complete Registration". Credentials land in `.env`
 as `ZAI_EMAIL` / `ZAI_PASSWORD`. Signing in again also needs the puzzle; a saved
 session skips all of it.
 
+### Gemini: sign in from your own browser (cookie hand-off)
+
+Google accounts can't be created or signed in automatically, so Gemini takes
+the session from a browser you already use:
+
+```bash
+ai-router browser login-gemini --link-only   # print the sign-in link + steps
+ai-router browser login-gemini --clipboard   # import what you copied
+ai-router browser login-gemini --file c.txt  # …or from a file (stdin also works)
+```
+
+Sign in at the printed link, then copy the `cookie:` request header of any
+gemini.google.com request (DevTools → Network), a "Copy as cURL" command, a
+Cookie-Editor JSON export or a `cookies.txt`. The command replaces the
+profile's Google cookies with these, checks that Gemini shows the account
+(guests still get a prompt box, so that alone isn't a login), and lists the
+picker's models as available/locked (guests: only 3.5 Flash-Lite). Cookie
+values are never printed. Don't press "Sign out" in the source browser
+afterwards — that ends the copied session too; just close the tab.
+
 ### Xiaomi MiMo Studio (aistudio.xiaomimimo.com)
 
 MiMo Studio needs a **Xiaomi Account** (guests can't chat). `provision-mimo`
@@ -195,6 +215,10 @@ ai-router serve-openai --port 8088
   | `z-ai/glm-5.2` | GLM-5.2 (account) | GLM thinking |
   | `xiaomi/mimo-v2.6-pro` | MiMo-V2.6-Pro | MiMo thinking |
   | `xiaomi/mimo-v2.6-flash` | MiMo-V2.6-Flash | MiMo thinking |
+  | `google/gemini-3.5-flash-lite` | 3.5 Flash-Lite (guest OK) | — |
+  | `google/gemini-3.8-flash` | 3.8 Flash (account) | — |
+  | `google/gemini-3.1-pro` | 3.1 Pro (account) | thinking summary |
+  | `google/gemini-4-argon` | 4 Argon (account) | — |
 
   (Qwen, Z.ai and MiMo models are chosen in the web picker per request; any other
   `qwen/*` slug falls back by keyword — `max`→Max, `omni`/`flash`→Flash, else
@@ -223,6 +247,18 @@ ai-router serve-openai --port 8088
   out (it already defaults to that), so MiMo never searches. MiMo has no
   thinking toggle in the web UI: the model reasons on its own and that text is
   returned as `reasoning_content`.
+- **Gemini** runs every request in a **temporary chat**, so Gemini's memory /
+  personal context (past chats, saved info) is not used and nothing lands in
+  your history, without changing account settings. Image/video generation stay
+  off. The location Gemini attaches comes from your Google account's "Your
+  places" (Home) and is not switchable from Gemini. Canvas can't be turned off:
+  if the model writes a document anyway, its source is appended to `content`.
+  The answer is read from Gemini's WebChannel stream (base64 protobuf, decoded
+  in `adapters/gemini/stream.py`). Gemini sometimes accepts a prompt and sends
+  nothing; after a per-model wait (30 s Flash, 60 s Pro, 150 s Argon) the
+  prompt is resent in a fresh temporary chat, up to twice. Sign in with
+  `browser login-gemini --in-browser`: copied cookies work at first, then
+  Gemini slows down and returns canned refusals.
 - Each request drives a real browser, so it is as slow as the model and requests
   to one provider are serialized.
 - `stream:true`: `delta.reasoning_content` first, then `delta.content`. Headers

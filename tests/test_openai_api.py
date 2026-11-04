@@ -51,6 +51,19 @@ def test_resolve_target_zai():
     assert resolve_target("glm-5.2").model_choice == "GLM-5.2"
 
 
+def test_resolve_target_gemini():
+    assert resolve_target("google/gemini-3.1-pro").model_choice == "Pro"
+    assert resolve_target("google/gemini-3.8-flash").model_choice == "Flash"
+    assert resolve_target("google/gemini-3.5-flash-lite").model_choice == "Flash-Lite"
+    assert resolve_target("google/gemini-4-argon").model_choice == "Argon"
+    assert resolve_target("google/gemini-3.1-pro").provider == "gemini"
+    # Other google/* slugs fall back by keyword.
+    assert resolve_target("google/gemini-2.5-pro-preview").model_choice == "Pro"
+    assert resolve_target("google/gemini-2.0-flash-lite-001").model_choice == "Flash-Lite"
+    assert resolve_target("google/gemini-4.1").model_choice == "Argon"
+    assert resolve_target("gemini-flash-latest").model_choice == "Flash"
+
+
 def test_resolve_target_mimo():
     pro = resolve_target("xiaomi/mimo-v2.6-pro")
     assert (pro.provider, pro.model_choice, pro.deep_think) == ("mimo", "MiMo-V2.6-Pro", False)

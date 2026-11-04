@@ -15,6 +15,7 @@ from typing import Any
 
 from playwright.async_api import Page
 
+from ai_router.adapters.base import ModelLockedError  # noqa: F401 - raised by select_model
 from ai_router.streaming import Delta, collect
 
 ZAI_URL = "https://chat.z.ai/"
@@ -34,10 +35,6 @@ Logger = Callable[[str], None]
 
 def _noop(_: str) -> None:  # pragma: no cover - trivial
     pass
-
-
-class ModelLockedError(RuntimeError):
-    """The requested model is disabled in the picker (guests: Flash only)."""
 
 
 class ZaiSSEParser:

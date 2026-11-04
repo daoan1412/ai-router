@@ -12,7 +12,9 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 
-from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
+from playwright.async_api import Page
+
+from ai_router.browser.pwcompat import PlaywrightTimeout
 
 from ai_router.adapters.deepseek.selectors import DEEPSEEK_URL, SEL_PROMPT_INPUT
 from ai_router.adapters.deepseek.wait import is_challenge_visible, read_response_snapshot

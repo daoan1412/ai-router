@@ -22,7 +22,9 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from itertools import zip_longest
 from typing import Any
 
-from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
+from playwright.async_api import Page
+
+from ai_router.browser.pwcompat import PlaywrightTimeout
 
 from ai_router.streaming import Delta, collect, prefix_delta
 

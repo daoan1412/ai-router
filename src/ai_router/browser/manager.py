@@ -6,7 +6,9 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from ai_router.browser.cloak import launch_persistent_context_async
-from playwright.async_api import BrowserContext, Error as PlaywrightError, Page
+from playwright.async_api import BrowserContext, Page
+
+from ai_router.browser.pwcompat import PlaywrightError
 
 from ai_router.config import AppConfig
 

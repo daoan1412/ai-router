@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
+from playwright.async_api import Page
+
+from ai_router.browser.pwcompat import PlaywrightTimeout
 
 from ai_router.adapters.base import SessionStatus
 from ai_router.adapters.chatgpt.planner import ChatGPTPlanner

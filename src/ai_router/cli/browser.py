@@ -7,7 +7,7 @@ import string
 from typing import Annotated
 
 import typer
-from playwright.async_api import Error as PlaywrightError
+from ai_router.browser.pwcompat import PlaywrightError
 
 from ai_router.adapters.registry import build_registry
 from ai_router.browser.cloak import launch_persistent_context_async
@@ -451,6 +451,157 @@ def provision_mimo(
     (form -> e-mail code from the mailbox -> MiMo user agreement).
     """
     asyncio.run(_provision_mimo(prompt, reuse, headless))
+
+
+GEMINI_COOKIE_HELP = """\
+1. Open this link in your own browser and sign in with your Google account:
+   {link}
+2. On gemini.google.com press F12 → Network, reload, click any request to
+   gemini.google.com and copy the whole "cookie:" request header value
+   (or right-click the request → Copy → Copy as cURL; a Cookie-Editor JSON
+   export or a cookies.txt file works too).
+3. Paste it here (then Enter and Ctrl+Z+Enter on Windows / Ctrl+D elsewhere),
+   or run again with --clipboard / --file PATH.
+"""
+
+
+def _read_clipboard() -> str:
+    import subprocess
+
+    out = subprocess.run(
+        ["powershell", "-NoProfile", "-Command", "Get-Clipboard -Raw"],
+        capture_output=True, text=True, encoding="utf-8", check=True,
+    )
+    return out.stdout
+
+
+async def _login_gemini(text: str, headless: bool) -> None:
+    import re
+
+    from ai_router.adapters.gemini.account import account_report
+    from ai_router.cookies import has_google_session, parse_cookie_paste
+
+    cookies = parse_cookie_paste(text, domain=".google.com", host="gemini.google.com")
+    if not has_google_session(cookies):
+        names = ", ".join(sorted({c["name"] for c in cookies})) or "(none)"
+        raise typer.BadParameter(
+            "No Google session cookie (__Secure-1PSID / __Secure-3PSID / SID) in the paste. "
+            f"Got: {names}. Copy the cookie header from a gemini.google.com request."
+        )
+    typer.echo(f"Parsed {len(cookies)} cookies (values not shown).")
+
+    cfg = load_config()
+    cfg.profile_dir.mkdir(parents=True, exist_ok=True)
+    ctx = await launch_persistent_context_async(str(cfg.profile_dir), headless=headless)
+    try:
+        # Drop the profile's old Google cookies (guest or another account) first.
+        await ctx.clear_cookies(domain=re.compile(r"(^|\.)google\.com$"))
+        await ctx.add_cookies(cookies)
+        page = await ctx.new_page()
+        is_in, models = await account_report(page)
+        if not is_in:
+            typer.echo(
+                "Gemini still shows 'Sign in' — the cookies were not accepted "
+                "(expired, or bound to the other browser). Sign in again and copy fresh ones."
+            )
+            raise typer.Exit(1)
+        typer.echo("Signed in to Gemini. Session saved in the ai-router profile.")
+        typer.echo("Models in the picker:")
+        for m in models:
+            mark = "available" if m["available"] else "locked"
+            typer.echo(f"  - {m['label']:<16} {mark:<10} {m['description']}")
+    finally:
+        try:
+            await ctx.close()
+        except PlaywrightError:
+            pass
+
+
+async def _login_gemini_in_browser(timeout: float) -> None:
+    import re
+
+    from ai_router.adapters.gemini.account import GEMINI_LOGIN_URL, account_report, signed_in
+    from ai_router.adapters.gemini.selectors import GEMINI_URL
+
+    cfg = load_config()
+    cfg.profile_dir.mkdir(parents=True, exist_ok=True)
+    ctx = await launch_persistent_context_async(str(cfg.profile_dir), headless=False)
+    try:
+        # A session native to this browser: drop any Google cookies copied in.
+        await ctx.clear_cookies(domain=re.compile(r"(^|\.)google\.com$"))
+        page = await ctx.new_page()
+        await page.goto(GEMINI_LOGIN_URL, wait_until="domcontentloaded")
+        typer.echo("Sign in to Google in the browser window (waiting up to "
+                   f"{timeout / 60:.0f} min)...")
+        deadline = asyncio.get_event_loop().time() + timeout
+        while asyncio.get_event_loop().time() < deadline:
+            await asyncio.sleep(3)
+            try:
+                if page.url.startswith(GEMINI_URL[:-4]) and await signed_in(page, timeout=2):
+                    break
+            except PlaywrightError:
+                continue
+        else:
+            typer.echo("Not signed in to Gemini in time.")
+            raise typer.Exit(1)
+        is_in, models = await account_report(page)
+        typer.echo("Signed in to Gemini. Session saved in the ai-router profile.")
+        typer.echo("Models in the picker:")
+        for m in models:
+            mark = "available" if m["available"] else "locked"
+            typer.echo(f"  - {m['label']:<16} {mark:<10} {m['description']}")
+    finally:
+        try:
+            await ctx.close()
+        except PlaywrightError:
+            pass
+
+
+@browser_app.command("login-gemini")
+def login_gemini(
+    file: Annotated[
+        str | None, typer.Option(help="Read the cookie export from this file")
+    ] = None,
+    clipboard: Annotated[bool, typer.Option(help="Read the cookie export from the clipboard")] = False,
+    link_only: Annotated[bool, typer.Option(help="Only print the sign-in link and steps")] = False,
+    headless: Annotated[bool, typer.Option(help="Verify in a headless browser")] = True,
+    in_browser: Annotated[
+        bool,
+        typer.Option(help="Sign in inside the ai-router browser instead of pasting cookies"),
+    ] = False,
+) -> None:
+    """Sign Gemini in from cookies copied out of your own browser.
+
+    Prints a Google sign-in link; you sign in there, copy the cookie header of a
+    gemini.google.com request and paste it (stdin, --clipboard or --file). The
+    cookies go into the ai-router profile, then login and the unlocked models
+    are checked.
+
+    --in-browser instead opens the ai-router browser at Google sign-in. Prefer
+    it: copied cookies make one session run on two devices, which Google
+    answers with slow or stalled Gemini replies after a while.
+    """
+    import sys
+
+    from ai_router.adapters.gemini.account import GEMINI_LOGIN_URL
+
+    if in_browser:
+        asyncio.run(_login_gemini_in_browser(600.0))
+        return
+    if link_only or not (file or clipboard):
+        typer.echo(GEMINI_COOKIE_HELP.format(link=GEMINI_LOGIN_URL))
+        if link_only:
+            return
+    if file:
+        with open(file, encoding="utf-8") as fh:
+            text = fh.read()
+    elif clipboard:
+        text = _read_clipboard()
+    else:
+        text = sys.stdin.read()
+    if not text.strip():
+        raise typer.BadParameter("Empty cookie paste")
+    asyncio.run(_login_gemini(text, headless))
 
 
 @browser_app.command("status")

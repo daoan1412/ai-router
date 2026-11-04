@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 import uuid
 from collections import defaultdict
@@ -56,6 +57,11 @@ MODEL_MAP: dict[str, Target] = {
     "z-ai/glm-5.2": Target("zai", "GLM-5.2", False),
     "xiaomi/mimo-v2.6-pro": Target("mimo", "MiMo-V2.6-Pro", False),
     "xiaomi/mimo-v2.6-flash": Target("mimo", "MiMo-V2.6-Flash", False),
+    # Gemini picker entries by name (the version number in the label changes).
+    "google/gemini-3.5-flash-lite": Target("gemini", "Flash-Lite", False),
+    "google/gemini-3.8-flash": Target("gemini", "Flash", False),
+    "google/gemini-3.1-pro": Target("gemini", "Pro", False),
+    "google/gemini-4-argon": Target("gemini", "Argon", False),
 }
 
 
@@ -106,6 +112,16 @@ def resolve_target(model: str | None) -> Target | None:
     if vendor == "xiaomi" or key.startswith("mimo"):
         label = "MiMo-V2.6-Flash" if "flash" in key else "MiMo-V2.6-Pro"
         return Target("mimo", label, False)
+    if vendor == "google" or key.startswith("gemini"):
+        if "argon" in key or re.search(r"gemini-4(\b|[.-])", key):
+            name = "Argon"
+        elif "lite" in key:
+            name = "Flash-Lite"
+        elif "pro" in key:
+            name = "Pro"
+        else:
+            name = "Flash"  # flash, or any other gemini slug → default web model
+        return Target("gemini", name, False)
     return None
 
 
@@ -339,6 +355,17 @@ class ProviderChatManager:
                 if model_choice:
                     await select_model(page, model_choice)
                 gen = chat_stream(page, prompt, timeout=300.0)
+            elif provider == "gemini":
+                from ai_router.adapters.gemini.chat import open_chat, stream_reply
+
+                # A new tab per request: a reused one can keep the previous
+                # temporary chat's state and never show the prompt box.
+                await page.close()
+                page = await self._page(provider)
+                # Fresh temporary chat (no memory) + model pick, before READY so
+                # a locked model is still an HTTP error.
+                tap = await open_chat(page, model_choice=model_choice)
+                gen = stream_reply(page, tap, prompt, model_choice=model_choice, timeout=600.0)
             else:
                 raise ValueError(f"Unknown provider: {provider}")
             yield READY
@@ -400,7 +427,7 @@ def create_app(cfg: AppConfig, *, headless: bool = False, keepalive_s: float = 1
             return JSONResponse(error_body("No text content in 'messages'"), status_code=400)
 
         def _fail(exc: Exception) -> JSONResponse:
-            from ai_router.adapters.zai.auth import ModelLockedError
+            from ai_router.adapters.base import ModelLockedError
 
             if isinstance(exc, NotLoggedInError):
                 return JSONResponse(
@@ -500,8 +527,10 @@ async def _sse_events(model: str, agen: AsyncIterator[Delta], *, keepalive_s: fl
                 break
             if item[0] in ("content", "reasoning"):
                 yield format_sse(build_chunk(chunk_id, created, model, delta_for(item)))
-    except Exception:  # noqa: BLE001 - headers already sent; end the stream cleanly
-        pass
+    except Exception as exc:  # noqa: BLE001 - headers already sent; end the stream cleanly
+        from ai_router.logger import trace
+
+        trace("stream_error", model=model, error=f"{type(exc).__name__}: {exc}"[:400])
     finally:
         if pending is not None and not pending.done():
             pending.cancel()

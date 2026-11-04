@@ -5,7 +5,7 @@ import time
 import uuid
 from dataclasses import dataclass
 
-from playwright.async_api import Error as PlaywrightError
+from ai_router.browser.pwcompat import PlaywrightError
 
 from ai_router.adapters.base import SessionStatus
 from ai_router.adapters.registry import ProviderRegistry, build_registry

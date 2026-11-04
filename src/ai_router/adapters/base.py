@@ -19,6 +19,10 @@ class SessionStatus(str, Enum):
 ProviderStatus = Literal["available", "coming_soon"]
 
 
+class ModelLockedError(RuntimeError):
+    """The requested model is disabled in the provider's picker (needs an account)."""
+
+
 class ProviderAdapter(Protocol):
     id: str
     name: str
