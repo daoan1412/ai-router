@@ -69,7 +69,7 @@ class FakeManager:
     async def stop(self):
         pass
 
-    async def stream(self, provider, prompt, *, deep_think=False, model_keyword=None):
+    async def stream(self, provider, prompt, *, deep_think=False, model_choice=None):
         try:
             if FakeManager.fail_with is not None:
                 raise FakeManager.fail_with  # e.g. not logged in: before READY
@@ -81,7 +81,7 @@ class FakeManager:
         finally:
             FakeManager.closed = True
 
-    async def complete(self, provider, prompt, *, deep_think=False, model_keyword=None):
+    async def complete(self, provider, prompt, *, deep_think=False, model_choice=None):
         return await collect(self.stream(provider, prompt))
 
 
@@ -137,6 +137,19 @@ def test_stream_not_logged_in_is_401_not_200(client):
     )
     assert resp.status_code == 401
     assert resp.json()["error"]["code"] == "not_logged_in"
+
+
+def test_locked_model_is_401_with_its_own_code(client):
+    from ai_router.adapters.zai.auth import ModelLockedError
+
+    FakeManager.fail_with = ModelLockedError("Z.ai model 'GLM-5.3' needs a signed-in account")
+    for stream in (True, False):
+        resp = client.post(
+            "/v1/chat/completions",
+            json={"model": "z-ai/glm-5.3", "stream": stream, "messages": [{"role": "user", "content": "hi"}]},
+        )
+        assert resp.status_code == 401
+        assert resp.json()["error"]["code"] == "model_requires_login"
 
 
 def test_stream_sends_keepalive_while_model_is_silent(client):

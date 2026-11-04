@@ -34,19 +34,24 @@ from ai_router.streaming import READY, Delta, collect
 class Target:
     """What an OpenRouter-style model id maps to in the browser UI."""
 
-    provider: str  # "deepseek" | "qwen"
-    qwen_keyword: str | None  # model-picker label for Qwen ("Plus"/"Max"/"Flash")
+    provider: str  # "deepseek" | "qwen" | "zai"
+    # Model picker choice: Qwen keyword ("Plus"/"Max"/"Flash") or Z.ai label
+    # ("GLM-5.3-Flash"/"GLM-5.3"/"GLM-5.2"); None for DeepSeek (one web model).
+    model_choice: str | None
     deep_think: bool  # enable DeepSeek DeepThink
 
 
 # OpenRouter-style ids we advertise in /v1/models, mapped to the web UI model.
-# (DeepSeek web has one model + a DeepThink toggle; Qwen web has three.)
+# (DeepSeek web has one model + a DeepThink toggle; Qwen and Z.ai have three.)
 MODEL_MAP: dict[str, Target] = {
     "deepseek/deepseek-chat": Target("deepseek", None, False),
     "deepseek/deepseek-r1-0528": Target("deepseek", None, True),
     "qwen/qwen3.7-plus": Target("qwen", "Plus", False),
     "qwen/qwen3.8-max-0902": Target("qwen", "Max", False),
     "qwen/qwen3.8-omni-flash": Target("qwen", "Flash", False),
+    "z-ai/glm-5.3-flash": Target("zai", "GLM-5.3-Flash", False),
+    "z-ai/glm-5.3": Target("zai", "GLM-5.3", False),
+    "z-ai/glm-5.2": Target("zai", "GLM-5.2", False),
 }
 
 
@@ -64,9 +69,10 @@ class NotLoggedInError(RuntimeError):
 def resolve_target(model: str | None) -> Target | None:
     """Resolve an OpenRouter-style model id to a Target.
 
-    Exact ids from MODEL_MAP win; otherwise any ``deepseek/*`` or ``qwen/*`` slug
-    (or a bare ``deepseek``/``qwen``) is resolved by its keywords, so the API
-    accepts OpenRouter's whole family and routes to the nearest web model.
+    Exact ids from MODEL_MAP win; otherwise any ``deepseek/*``, ``qwen/*`` or
+    ``z-ai/*`` slug (or a bare ``deepseek``/``qwen``/``glm``) is resolved by its
+    keywords, so the API accepts OpenRouter's whole family and routes to the
+    nearest web model.
     """
     if not model:
         return None
@@ -85,6 +91,14 @@ def resolve_target(model: str | None) -> Target | None:
         else:
             kw = "Plus"  # plus, or any other qwen slug → default web model
         return Target("qwen", kw, False)
+    if vendor in ("z-ai", "zai", "zhipu") or key.startswith(("glm", "z-ai", "zai")):
+        if "flash" in key or "air" in key:
+            label = "GLM-5.3-Flash"
+        elif "5.2" in key:
+            label = "GLM-5.2"
+        else:
+            label = "GLM-5.3"  # glm-5.3, glm-5, glm-latest, older glm-4.x → best web model
+        return Target("zai", label, False)
     return None
 
 
@@ -237,13 +251,14 @@ class ProviderChatManager:
         prompt: str,
         *,
         deep_think: bool = False,
-        model_keyword: str | None = None,
+        model_choice: str | None = None,
     ) -> AsyncIterator[Delta]:
         """Yield READY, then ("content"|"reasoning", delta) while the provider generates.
 
         Holds the provider's lock for the whole generation, so one tab serves
-        one request at a time. NotLoggedInError is raised before READY, so a
-        caller that waits for READY can still answer with a proper HTTP error.
+        one request at a time. NotLoggedInError / ModelLockedError are raised
+        before READY, so a caller that waits for READY can still answer with a
+        proper HTTP error.
         """
         async with self._locks[provider]:
             page = await self._page(provider)
@@ -281,8 +296,26 @@ class ProviderChatManager:
                     trace("qwen_tools_off", switched=",".join(off) or "(already off)")
                     self._qwen_tools_checked = True
                 gen = chat_stream(
-                    page, prompt, timeout=300.0, new_chat=True, model_keyword=model_keyword
+                    page, prompt, timeout=300.0, new_chat=True, model_keyword=model_choice
                 )
+            elif provider == "zai":
+                from ai_router.adapters.zai.auth import (
+                    ZAI_URL,
+                    chat_stream,
+                    dismiss_overlays,
+                    guest_or_signed_in,
+                    select_model,
+                )
+
+                # A fresh load of the home page is a new chat.
+                await page.goto(ZAI_URL, wait_until="domcontentloaded")
+                await page.wait_for_timeout(1500)
+                await dismiss_overlays(page)
+                if not await guest_or_signed_in(page):
+                    raise NotLoggedInError("zai")
+                if model_choice:
+                    await select_model(page, model_choice)  # ModelLockedError for guests
+                gen = chat_stream(page, prompt, timeout=300.0)
             else:
                 raise ValueError(f"Unknown provider: {provider}")
             yield READY
@@ -295,10 +328,10 @@ class ProviderChatManager:
         prompt: str,
         *,
         deep_think: bool = False,
-        model_keyword: str | None = None,
+        model_choice: str | None = None,
     ) -> tuple[str, str | None]:
         return await collect(
-            self.stream(provider, prompt, deep_think=deep_think, model_keyword=model_keyword)
+            self.stream(provider, prompt, deep_think=deep_think, model_choice=model_choice)
         )
 
 
@@ -344,9 +377,16 @@ def create_app(cfg: AppConfig, *, headless: bool = False, keepalive_s: float = 1
             return JSONResponse(error_body("No text content in 'messages'"), status_code=400)
 
         def _fail(exc: Exception) -> JSONResponse:
+            from ai_router.adapters.zai.auth import ModelLockedError
+
             if isinstance(exc, NotLoggedInError):
                 return JSONResponse(
                     error_body(str(exc), type_="authentication_error", code="not_logged_in"),
+                    status_code=401,
+                )
+            if isinstance(exc, ModelLockedError):
+                return JSONResponse(
+                    error_body(str(exc), type_="authentication_error", code="model_requires_login"),
                     status_code=401,
                 )
             return JSONResponse(
@@ -355,7 +395,7 @@ def create_app(cfg: AppConfig, *, headless: bool = False, keepalive_s: float = 1
             )
 
         model = body.get("model")
-        opts = {"deep_think": target.deep_think, "model_keyword": target.qwen_keyword}
+        opts = {"deep_think": target.deep_think, "model_choice": target.model_choice}
 
         if body.get("stream"):
             from starlette.responses import StreamingResponse

@@ -1,6 +1,16 @@
 from __future__ import annotations
 
-from ai_router.mailtemp_web import extract_code, parse_address
+from ai_router.mailtemp_web import extract_code, parse_address, pick_link
+
+
+def test_pick_link_finds_verify_link_not_page_links():
+    links = [
+        {"text": "API", "href": "https://mailtemp.vn/api-docs"},
+        {"text": "Verify Email", "href": "https://chat.z.ai/auth/verify_email?token=verify-abc&email=x%40y.vn"},
+        {"text": "support@z.ai", "href": "mailto:support@z.ai"},
+    ]
+    assert pick_link(links, "/auth/verify_email?token=") == links[1]["href"]
+    assert pick_link(links, "/nothing") is None
 
 
 def test_parse_address_joins_local_and_domain_lines():

@@ -13,11 +13,11 @@ from ai_router.openai_api import (
 
 def test_resolve_target_exact_openrouter_ids():
     t = resolve_target("qwen/qwen3.8-max-0902")
-    assert t.provider == "qwen" and t.qwen_keyword == "Max" and t.deep_think is False
+    assert t.provider == "qwen" and t.model_choice == "Max" and t.deep_think is False
     t = resolve_target("qwen/qwen3.8-omni-flash")
-    assert t.qwen_keyword == "Flash"
+    assert t.model_choice == "Flash"
     t = resolve_target("qwen/qwen3.7-plus")
-    assert t.qwen_keyword == "Plus"
+    assert t.model_choice == "Plus"
     t = resolve_target("deepseek/deepseek-r1-0528")
     assert t.provider == "deepseek" and t.deep_think is True
     t = resolve_target("deepseek/deepseek-chat")
@@ -26,15 +26,29 @@ def test_resolve_target_exact_openrouter_ids():
 
 def test_resolve_target_family_fallback():
     # Any qwen/* slug resolves to the nearest web model by keyword.
-    assert resolve_target("qwen/qwen3-max").qwen_keyword == "Max"
-    assert resolve_target("qwen/qwen3-coder-flash").qwen_keyword == "Flash"
-    assert resolve_target("qwen/qwen-plus").qwen_keyword == "Plus"
-    assert resolve_target("qwen/qwen2.5-72b-instruct").qwen_keyword == "Plus"
+    assert resolve_target("qwen/qwen3-max").model_choice == "Max"
+    assert resolve_target("qwen/qwen3-coder-flash").model_choice == "Flash"
+    assert resolve_target("qwen/qwen-plus").model_choice == "Plus"
+    assert resolve_target("qwen/qwen2.5-72b-instruct").model_choice == "Plus"
     # DeepSeek reasoning keyed on r1/reason/think.
     assert resolve_target("deepseek/deepseek-v3.2").deep_think is False
     assert resolve_target("deepseek/deepseek-r1").deep_think is True
     assert resolve_target("gpt-4o") is None
     assert resolve_target(None) is None
+
+
+def test_resolve_target_zai():
+    # Exact OpenRouter ids map to the web picker labels.
+    assert resolve_target("z-ai/glm-5.3-flash").model_choice == "GLM-5.3-Flash"
+    assert resolve_target("z-ai/glm-5.3").model_choice == "GLM-5.3"
+    assert resolve_target("z-ai/glm-5.2").model_choice == "GLM-5.2"
+    assert resolve_target("z-ai/glm-5.3").provider == "zai"
+    # Other z-ai/* slugs fall back by keyword.
+    assert resolve_target("z-ai/glm-4.7-flash").model_choice == "GLM-5.3-Flash"
+    assert resolve_target("z-ai/glm-4.5-air").model_choice == "GLM-5.3-Flash"
+    assert resolve_target("z-ai/glm-5.3-prime").model_choice == "GLM-5.3"
+    assert resolve_target("~z-ai/glm-latest") is None  # OpenRouter alias syntax not supported
+    assert resolve_target("glm-5.2").model_choice == "GLM-5.2"
 
 
 def test_resolve_model_and_wants_reasoning_wrappers():

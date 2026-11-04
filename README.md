@@ -131,6 +131,22 @@ auto-solved, so the browser is **headed and you drag the slider by hand**; the
 rest is automated (email → code from mailtemp → 6-digit entry → age gate →
 chat). Verified end to end: the smoke chat returns a real answer.
 
+### Z.ai (chat.z.ai, GLM)
+
+Z.ai works **without an account** as a guest, but guests only get GLM-5.3-Flash;
+GLM-5.3 and GLM-5.2 need a signed-in account. `provision-zai` creates one:
+
+```bash
+ai-router browser provision-zai            # new account with a temp email + test chat
+ai-router browser provision-zai --reuse    # sign in again with ZAI_EMAIL / ZAI_PASSWORD
+```
+
+Sign-up uses email + password, an Aliyun **drag-puzzle you solve by hand**
+(headed), and a **verification link** emailed to the mailbox (read from the
+mailtemp.vn website), then "Complete Registration". Credentials land in `.env`
+as `ZAI_EMAIL` / `ZAI_PASSWORD`. Signing in again also needs the puzzle; a saved
+session skips all of it.
+
 ## OpenAI-compatible API
 
 Serve the browser providers behind an OpenAI-style HTTP API so any OpenAI SDK
@@ -152,14 +168,20 @@ ai-router serve-openai --port 8088
   | `qwen/qwen3.7-plus` | Qwen3.7-Plus | thinking summary |
   | `qwen/qwen3.8-max-0902` | Qwen3.8-Max | thinking summary |
   | `qwen/qwen3.8-omni-flash` | Qwen3.8-Omni-Flash | thinking summary |
+  | `z-ai/glm-5.3-flash` | GLM-5.3-Flash (guest OK) | GLM thinking |
+  | `z-ai/glm-5.3` | GLM-5.3 (account) | GLM thinking |
+  | `z-ai/glm-5.2` | GLM-5.2 (account) | GLM thinking |
 
-  (Qwen model is chosen in the web picker per request; any other `qwen/*` slug
-  falls back by keyword — `max`→Max, `omni`/`flash`→Flash, else Plus.)
+  (Qwen and Z.ai models are chosen in the web picker per request; any other
+  `qwen/*` slug falls back by keyword — `max`→Max, `omni`/`flash`→Flash, else
+  Plus — and any other `z-ai/*` slug to GLM-5.3, or GLM-5.3-Flash for
+  `flash`/`air`. A guest asking for an account-only model gets HTTP 401
+  `model_requires_login`.)
 - The answer is in `message.content`, the reasoning in `message.reasoning_content`:
-  DeepSeek's DeepThink block for `r1` ids, and for Qwen the step-by-step summary
-  from its "Thinking and Search" panel (present whenever Qwen thinks).
+  DeepSeek's DeepThink block for `r1` ids, the step-by-step summary from Qwen's
+  "Thinking and Search" panel (present whenever Qwen thinks), and GLM's thinking.
 - Answers are read from the page's own completion stream, captured through CDP
-  (DeepSeek `/api/v0/chat/completion`, Qwen `/api/v2/chat/completions`), so
+  (DeepSeek `/api/v0/chat/completion`, Qwen and Z.ai `/api/v2/chat/completions`), so
   `content` is the raw markdown with LaTeX exactly as the model wrote it, and
   streaming is token by token. If that stream isn't seen, it falls back to
   reading the rendered page (where math comes out as rendered glyphs).
@@ -167,6 +189,10 @@ ai-router serve-openai --port 8088
   for Qwen, every switch under Settings → Personalization (web search, web
   scraping, image search/generation/editing, code interpreter, memory) is turned
   off once per server run and by `provision-qwen`. This is an account setting.
+  Z.ai's web requests already send `web_search`/`image_generation`/VLM tools as
+  off (checked for guests and accounts). It does run the chat in its
+  "general agent" mode, so the model *could* pick a built-in skill; none was
+  seen in testing, and a non-answer phase is logged as a warning.
 - Each request drives a real browser, so it is as slow as the model and requests
   to one provider are serialized.
 - `stream:true`: `delta.reasoning_content` first, then `delta.content`. Headers

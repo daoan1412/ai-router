@@ -1,0 +1,62 @@
+data: {"type":"chat:completion","data":{"delta_content":"The user asks in Vietnamese","phase":"thinking"}}
+
+data: {"type":"chat:completion","data":{"delta_content":" to solve x² -","phase":"thinking"}}
+
+data: {"type":"chat:completion","data":{"delta_content":" 5x + ","phase":"thinking"}}
+
+data: {"type":"chat:completion","data":{"delta_content":"6 = 0,","phase":"thinking"}}
+
+data: {"type":"chat:completion","data":{"delta_content":" use LaTeX, keep it","phase":"thinking"}}
+
+data: {"type":"chat:completion","data":{"delta_content":" brief. No need for","phase":"thinking"}}
+
+data: {"type":"chat:completion","data":{"delta_content":" web search. Just solve","phase":"thinking"}}
+
+data: {"type":"chat:completion","data":{"delta_content":".\n\nx² - ","phase":"thinking"}}
+
+data: {"type":"chat:completion","data":{"delta_content":"5x + 6","phase":"thinking"}}
+
+data: {"type":"chat:completion","data":{"delta_content":" = 0 → (","phase":"thinking"}}
+
+data: {"type":"chat:completion","data":{"delta_content":"x-2)(x","phase":"thinking"}}
+
+data: {"type":"chat:completion","data":{"delta_content":"-3)=0 →","phase":"thinking"}}
+
+data: {"type":"chat:completion","data":{"delta_content":" x = 2 or","phase":"thinking"}}
+
+data: {"type":"chat:completion","data":{"delta_content":" x = 3.","phase":"thinking"}}
+
+data: {"type":"chat:completion","data":{"delta_content":"## Giải\n\n$$","phase":"answer"}}
+
+data: {"type":"chat:completion","data":{"delta_content":"x^2 - ","phase":"answer"}}
+
+data: {"type":"chat:completion","data":{"delta_content":"5x + 6","phase":"answer"}}
+
+data: {"type":"chat:completion","data":{"delta_content":" = 0 \\iff","phase":"answer"}}
+
+data: {"type":"chat:completion","data":{"delta_content":" (x-2)(","phase":"answer"}}
+
+data: {"type":"chat:completion","data":{"delta_content":"x-3) =","phase":"answer"}}
+
+data: {"type":"chat:completion","data":{"delta_content":" 0$$\n\n$$","phase":"answer"}}
+
+data: {"type":"chat:completion","data":{"delta_content":"\\iff \\begin{","phase":"answer"}}
+
+data: {"type":"chat:completion","data":{"delta_content":"cases} x = ","phase":"answer"}}
+
+data: {"type":"chat:completion","data":{"delta_content":"2 \\\\ x = ","phase":"answer"}}
+
+data: {"type":"chat:completion","data":{"delta_content":"3 \\end{cases","phase":"answer"}}
+
+data: {"type":"chat:completion","data":{"delta_content":"}$$\n\n**V","phase":"answer"}}
+
+data: {"type":"chat:completion","data":{"delta_content":"ậy** $x \\","phase":"answer"}}
+
+data: {"type":"chat:completion","data":{"delta_content":"in \\{2;\\","phase":"answer"}}
+
+data: {"type":"chat:completion","data":{"delta_content":",3\\}$.","phase":"answer"}}
+
+data: {"type":"chat:completion","data":{"phase":"other","usage":{"prompt_tokens":515,"completion_tokens":147,"total_tokens":662,"prompt_tokens_details":{}}}}
+
+data: {"type":"chat:completion","data":{"phase":"done","done":true}}
+

@@ -242,6 +242,110 @@ def provision_qwen(
     asyncio.run(_provision_qwen(prompt, reuse, headless))
 
 
+async def _provision_zai(prompt: str, reuse: bool, headless: bool) -> None:
+    from ai_router import mailtemp_web
+    from ai_router.adapters.zai.auth import (
+        MODEL_53,
+        VERIFY_LINK_PART,
+        ZAI_URL,
+        chat,
+        dismiss_overlays,
+        signed_in_now,
+        zai_sign_in,
+        zai_sign_up,
+    )
+    from ai_router.dotenv import set_env_vars
+
+    def log(msg: str) -> None:
+        typer.echo(msg)
+
+    cfg = load_config()
+    cfg.profile_dir.mkdir(parents=True, exist_ok=True)
+    saved_email = os.getenv("ZAI_EMAIL") if reuse else None
+    saved_password = os.getenv("ZAI_PASSWORD") if reuse else None
+
+    typer.echo("Launching browser (headed — you drag Z.ai's Aliyun puzzle when it appears)...")
+    ctx = await launch_persistent_context_async(str(cfg.profile_dir), headless=headless)
+    try:
+        z_page = await ctx.new_page()
+        await z_page.goto(ZAI_URL, wait_until="domcontentloaded")
+        await z_page.wait_for_timeout(3000)
+        await dismiss_overlays(z_page, log)
+
+        if await signed_in_now(z_page):
+            typer.echo("Already signed in (saved session) — no email/puzzle needed.")
+            outcome = "already_signed_in"
+        elif saved_email and saved_password:
+            typer.echo(f"Signing in as {saved_email}...")
+            outcome = await zai_sign_in(z_page, email=saved_email, password=saved_password, log=log)
+        else:
+            # Z.ai verifies by a link in the email; the website mailbox exposes it.
+            mt_page = await ctx.new_page()
+            email = await mailtemp_web.create_mailbox(mt_page, fresh=True, log=log)
+            password = _generate_password()
+            env_path = set_env_vars({"ZAI_EMAIL": email, "ZAI_PASSWORD": password})
+            typer.echo(f"Saved ZAI_EMAIL / ZAI_PASSWORD to {env_path}")
+
+            async def get_link() -> str:
+                return await mailtemp_web.wait_for_link(
+                    mt_page, href_contains=VERIFY_LINK_PART, subject_hint="Verify Your Email", log=log
+                )
+
+            outcome = await zai_sign_up(
+                z_page,
+                email=email,
+                password=password,
+                name=email.split("@")[0],
+                get_link=get_link,
+                log=log,
+            )
+
+        if outcome == "needs_manual":
+            typer.echo(
+                "Could not confirm sign-in (puzzle unsolved?). The chat test below "
+                "falls back to guest mode (GLM-5.3-Flash)."
+            )
+        await z_page.goto(ZAI_URL, wait_until="domcontentloaded")
+        await z_page.wait_for_timeout(2000)
+        await dismiss_overlays(z_page, log)
+        signed_in = await signed_in_now(z_page)
+        typer.echo("")
+        typer.echo(f"--- Smoke test chat ({MODEL_53 if signed_in else 'guest'}) ---")
+        answer, reasoning = await chat(
+            z_page, prompt, log=log, model_label=MODEL_53 if signed_in else None
+        )
+        typer.echo("")
+        if reasoning:
+            typer.echo(f"Z.ai reasoning ({len(reasoning)} chars): {reasoning[:200]}...")
+        typer.echo("Z.ai replied:")
+        typer.echo(answer or "(no answer captured)")
+    finally:
+        try:
+            await ctx.close()
+        except PlaywrightError:
+            pass
+
+
+@browser_app.command("provision-zai")
+def provision_zai(
+    prompt: Annotated[
+        str, typer.Option(help="Smoke-test prompt to send after login")
+    ] = "Say hello in one short sentence.",
+    reuse: Annotated[
+        bool,
+        typer.Option(help="Sign in with ZAI_EMAIL/ZAI_PASSWORD from .env instead of a new account"),
+    ] = False,
+    headless: Annotated[bool, typer.Option(help="Run headless (not recommended)")] = False,
+) -> None:
+    """Create a Z.ai account with a temp email (or sign in), then send a test chat.
+
+    Headed: drag the Aliyun puzzle when it appears; the rest is automated
+    (form -> verification link from the mailbox -> complete registration).
+    A signed-in account unlocks GLM-5.3 / GLM-5.2 (guests only get GLM-5.3-Flash).
+    """
+    asyncio.run(_provision_zai(prompt, reuse, headless))
+
+
 @browser_app.command("status")
 def status(
     provider: Annotated[str | None, typer.Option(help="Provider id (default: all)")] = None,

@@ -160,3 +160,64 @@ async def wait_for_code(
                 return code
         await page.wait_for_timeout(interval * 1000)
     raise RuntimeError(f"mailtemp.vn: no verification code within {timeout:.0f}s")
+
+
+def pick_link(links: list[dict], href_contains: str) -> str | None:
+    """First ``href`` containing ``href_contains`` (e.g. a verify-email path)."""
+    for link in links:
+        href = link.get("href") or ""
+        if href_contains in href:
+            return href
+    return None
+
+
+async def _read_links_from_frames(page: Page) -> list[dict]:
+    links: list[dict] = []
+    for fr in page.frames:
+        try:
+            links += await fr.evaluate(
+                "() => [...document.querySelectorAll('a')].map(a => "
+                "({text: (a.innerText || '').trim(), href: a.href}))"
+            )
+        except Exception:  # noqa: BLE001
+            continue
+    return links
+
+
+async def wait_for_link(
+    page: Page,
+    *,
+    href_contains: str,
+    subject_hint: str,
+    timeout: float = 180.0,
+    interval: float = 3.0,
+    log: Logger = _noop,
+) -> str:
+    """Poll the inbox, open the matching message, return its link containing
+    ``href_contains`` — for services that verify by link instead of a code."""
+    deadline = asyncio.get_event_loop().time() + timeout
+    opened = False
+    while asyncio.get_event_loop().time() < deadline:
+        try:
+            r = page.get_by_text(REFRESH_LABEL, exact=False).first
+            if await r.count():
+                await r.click(timeout=2000)
+        except Exception:  # noqa: BLE001
+            pass
+        await page.wait_for_timeout(1000)
+        if EMPTY_MARKER not in await _body_text(page):
+            if not opened:
+                try:
+                    msg = page.get_by_text(subject_hint, exact=False).first
+                    if await msg.count():
+                        await msg.click(timeout=2500)
+                        opened = True
+                        await page.wait_for_timeout(1500)
+                except Exception:  # noqa: BLE001
+                    pass
+            link = pick_link(await _read_links_from_frames(page), href_contains)
+            if link:
+                log("verification link received")
+                return link
+        await page.wait_for_timeout(interval * 1000)
+    raise RuntimeError(f"mailtemp.vn: no link containing {href_contains!r} within {timeout:.0f}s")
